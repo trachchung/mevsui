@@ -832,6 +832,14 @@ impl WritebackCache {
         &self.store
     }
 
+    async fn update_package_cache(&self, package_updates: &[(ObjectID, Object)]) -> SuiResult {
+        for (id, object) in package_updates {
+            self.packages
+                .insert(*id, PackageObject::new(object.clone()));
+        }
+        Ok(())
+    }
+
     #[instrument(level = "debug", skip_all)]
     fn write_transaction_outputs(&self, epoch_id: EpochId, tx_outputs: Arc<TransactionOutputs>) {
         trace!(digest = ?tx_outputs.transaction.digest(), "writing transaction outputs to cache");
@@ -2065,6 +2073,13 @@ impl ExecutionCacheWrite for WritebackCache {
 
     fn write_transaction_outputs(&self, epoch_id: EpochId, tx_outputs: Arc<TransactionOutputs>) {
         WritebackCache::write_transaction_outputs(self, epoch_id, tx_outputs);
+    }
+
+    fn update_package_cache<'a>(
+        &'a self,
+        package_updates: &'a [(ObjectID, Object)],
+    ) -> BoxFuture<'_, SuiResult> {
+        WritebackCache::update_package_cache(self, package_updates).boxed()
     }
 }
 
