@@ -13748,6 +13748,8 @@ dependencies = [
  "futures",
  "governor",
  "im",
+ "indexmap 2.2.6",
+ "interprocess",
  "itertools 0.13.0",
  "lru 0.10.0",
  "mockall",

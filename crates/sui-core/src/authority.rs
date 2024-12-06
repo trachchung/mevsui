@@ -12,6 +12,7 @@ use crate::override_cache::InputLoaderCache;
 use crate::override_cache::ObjectCache;
 use crate::rpc_index::RpcIndexStore;
 use crate::transaction_outputs::TransactionOutputs;
+use crate::tx_handler::TxHandler;
 use crate::verify_indexes::{fix_indexes, verify_indexes};
 use anyhow::anyhow;
 use arc_swap::{ArcSwap, Guard};
@@ -863,6 +864,8 @@ pub struct AuthorityState {
     pub(crate) congestion_tracker: Arc<CongestionTracker>,
 
     pub cache_update_handler: CacheUpdateHandler,
+
+    pub tx_handler: TxHandler,
 }
 
 /// The authority state encapsulates all state, drives execution, and ensures safety.
@@ -1583,6 +1586,8 @@ impl AuthorityState {
         _execution_guard: ExecutionLockReadGuard<'_>,
         epoch_store: &Arc<AuthorityPerEpochStore>,
     ) -> SuiResult {
+        let _ = self.tx_handler.send_tx_effects(effects).await;
+
         let _scope: Option<mysten_metrics::MonitoredScopeGuard> =
             monitored_scope("Execution::commit_certificate");
         let _metrics_guard = self.metrics.commit_certificate_latency.start_timer();
@@ -3240,6 +3245,7 @@ impl AuthorityState {
             chain_identifier,
             congestion_tracker: Arc::new(CongestionTracker::new()),
             cache_update_handler: CacheUpdateHandler::new(),
+            tx_handler: TxHandler::default(),
         });
 
         let state_clone = Arc::downgrade(&state);
