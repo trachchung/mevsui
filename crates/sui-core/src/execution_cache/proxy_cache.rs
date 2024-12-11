@@ -100,7 +100,7 @@ impl ProxyCache {
         self.passthrough_cache.get_object(object_id)
     }
 
-    pub fn reload_cached(&self, objects: &[ObjectID]) {
+    pub fn reload_cached(&self, objects: Vec<(ObjectID, Object)>) {
         self.writeback_cache.reload_cached(objects);
     }
 
@@ -248,8 +248,8 @@ impl TransactionCacheRead for ProxyCache {
 }
 
 impl ExecutionCacheWrite for ProxyCache {
-    fn reload_objects(&self, objects: Vec<ObjectID>) {
-        self.reload_cached(&objects);
+    fn reload_objects(&self, objects: Vec<(ObjectID, Object)>) {
+        self.reload_cached(objects);
     }
 
     fn write_transaction_outputs(
