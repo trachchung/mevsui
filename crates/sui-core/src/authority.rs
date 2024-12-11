@@ -1588,7 +1588,7 @@ impl AuthorityState {
     ) -> SuiResult {
         let raw_events = inner_temporary_store.events.clone();
 
-        let sui_events = raw_events
+        let sui_events: Vec<SuiEvent> = raw_events
             .data
             .iter()
             .enumerate()
@@ -1668,7 +1668,7 @@ impl AuthorityState {
                 .keys()
                 .copied()
                 .collect::<Vec<_>>();
-            if !changed_objects.is_empty() && !transaction_outputs.events.data.is_empty() {
+            if !changed_objects.is_empty() && !sui_events.is_empty() {
                 self.cache_update_handler
                     .notify_reload_objects(changed_objects)
                     .await;
@@ -1685,10 +1685,15 @@ impl AuthorityState {
         // commit_certificate finished, the tx is fully committed to the store.
         tx_guard.commit_tx();
 
-        let _ = self
-            .tx_handler
-            .send_tx_effects_and_events(effects, sui_events)
-            .await;
+        if !certificate.transaction_data().is_system_tx()
+            && !sui_events.is_empty()
+            && !transaction_outputs.written.is_empty()
+        {
+            let _ = self
+                .tx_handler
+                .send_tx_effects_and_events(effects, sui_events)
+                .await;
+        }
 
         // Notifies transaction manager about transaction and output objects committed.
         // This provides necessary information to transaction manager to start executing
