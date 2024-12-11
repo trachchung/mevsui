@@ -2076,6 +2076,10 @@ impl TransactionCacheRead for WritebackCache {
 }
 
 impl ExecutionCacheWrite for WritebackCache {
+    fn reload_objects(&self, objects: Vec<ObjectID>) {
+        self.reload_cached(&objects);
+    }
+
     fn acquire_transaction_locks(
         &self,
         epoch_store: &AuthorityPerEpochStore,
