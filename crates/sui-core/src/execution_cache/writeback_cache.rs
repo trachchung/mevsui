@@ -476,6 +476,8 @@ pub struct WritebackCache {
     backpressure_threshold: u64,
     backpressure_manager: Arc<BackpressureManager>,
     metrics: Arc<ExecutionCacheMetrics>,
+
+    enable_record_pool_ids: bool,
 }
 
 macro_rules! check_cache_entry_by_version {
@@ -528,6 +530,8 @@ impl WritebackCache {
             ))
             .build();
 
+        let enable_record_pool_ids = std::env::var("ENABLE_RECORD_POOL_RELATED_ID").is_ok();
+
         Self {
             dirty: UncommittedData::new(),
             cached: CachedCommittedData::new(config),
@@ -538,6 +542,7 @@ impl WritebackCache {
             backpressure_manager,
             backpressure_threshold: config.backpressure_threshold(),
             metrics,
+            enable_record_pool_ids,
         }
     }
 
@@ -1383,9 +1388,11 @@ impl WritebackCache {
     }
 
     fn record_pool_related_id(&self, object_id: &ObjectID) {
-        POOL_RELATED_STATE
-            .get_or_init(PoolRelatedState::new)
-            .record_pool_related_id(object_id);
+        if self.enable_record_pool_ids {
+            POOL_RELATED_STATE
+                .get_or_init(PoolRelatedState::new)
+                .record_pool_related_id(object_id);
+        }
     }
 }
 
