@@ -60,9 +60,11 @@ use mysten_common::sync::notify_read::NotifyRead;
 use parking_lot::Mutex;
 use prometheus::Registry;
 use std::collections::BTreeMap;
+use std::fs::{File, OpenOptions};
 use std::hash::Hash;
 use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
+use std::io::Write;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use sui_config::ExecutionCacheConfig;
 use sui_macros::fail_point;
 use sui_protocol_config::ProtocolVersion;
@@ -99,10 +101,6 @@ use super::{
 #[cfg(test)]
 #[path = "unit_tests/writeback_cache_tests.rs"]
 pub mod writeback_cache_tests;
-
-use std::fs::{File, OpenOptions};
-use std::io::Write;
-use std::sync::Mutex as StdMutex;
 
 #[derive(Clone, PartialEq, Eq)]
 enum ObjectEntry {
@@ -424,6 +422,37 @@ where
     }
 }
 
+struct PoolRelatedState {
+    related_ids: DashSet<ObjectID>,
+    file_handler: StdMutex<File>,
+}
+
+impl PoolRelatedState {
+    fn new() -> Self {
+        let pool_related_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(POOL_RELATED_OBJECTS_PATH)
+            .expect("Failed to open pool related objects file");
+
+        Self {
+            related_ids: pool_related_object_ids(),
+            file_handler: StdMutex::new(pool_related_file),
+        }
+    }
+
+    fn record_pool_related_id(&self, object_id: &ObjectID) {
+        if !self.related_ids.contains(object_id) {
+            self.related_ids.insert(*object_id);
+            if let Ok(mut file) = self.file_handler.lock() {
+                let _ = writeln!(file, "{}", object_id);
+            }
+        }
+    }
+}
+
+static POOL_RELATED_STATE: OnceLock<PoolRelatedState> = OnceLock::new();
+
 pub struct WritebackCache {
     dirty: UncommittedData,
     cached: CachedCommittedData,
@@ -447,8 +476,6 @@ pub struct WritebackCache {
     backpressure_threshold: u64,
     backpressure_manager: Arc<BackpressureManager>,
     metrics: Arc<ExecutionCacheMetrics>,
-    pool_related_ids: Arc<DashSet<ObjectID>>,
-    pool_related_file: Arc<StdMutex<File>>,
 }
 
 macro_rules! check_cache_entry_by_version {
@@ -501,12 +528,6 @@ impl WritebackCache {
             ))
             .build();
 
-        let pool_related_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(POOL_RELATED_OBJECTS_PATH)
-            .expect("Failed to open pool related objects file");
-
         Self {
             dirty: UncommittedData::new(),
             cached: CachedCommittedData::new(config),
@@ -517,9 +538,6 @@ impl WritebackCache {
             backpressure_manager,
             backpressure_threshold: config.backpressure_threshold(),
             metrics,
-            // pool_related_ids: Arc::new(pool_related_object_ids()),
-            pool_related_ids: Arc::new(DashSet::new()),
-            pool_related_file: Arc::new(StdMutex::new(pool_related_file)),
         }
     }
 
@@ -1364,13 +1382,10 @@ impl WritebackCache {
         }
     }
 
-    fn record_pool_related_id(&self, _object_id: &ObjectID) {
-        // if !self.pool_related_ids.contains(object_id) {
-        //     self.pool_related_ids.insert(*object_id);
-        //     if let Ok(mut file) = self.pool_related_file.lock() {
-        //         let _ = writeln!(file, "{}", object_id);
-        //     }
-        // }
+    fn record_pool_related_id(&self, object_id: &ObjectID) {
+        POOL_RELATED_STATE
+            .get_or_init(PoolRelatedState::new)
+            .record_pool_related_id(object_id);
     }
 }
 
