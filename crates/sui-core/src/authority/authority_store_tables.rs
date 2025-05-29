@@ -65,7 +65,7 @@ pub struct AuthorityPerpetualTables {
     /// This is because there can be partially executed transactions whose effects have not yet
     /// been written out, and which must be retried. But, they cannot be retried unless their input
     /// objects are still accessible!
-    pub(crate) objects: DBMap<ObjectKey, StoreObjectWrapper>,
+    pub objects: DBMap<ObjectKey, StoreObjectWrapper>,
 
     /// This is a map between object references of currently active objects that can be mutated.
     ///

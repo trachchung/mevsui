@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 use tracing::{error, info};
 
 const SOCKET_PATH: &str = "/tmp/sui_cache_updates.sock";
-pub const POOL_RELATED_OBJECTS_PATH: &str = "/home/ubuntu/sui/pool_related_ids.txt";
+pub const POOL_RELATED_OBJECTS_PATH: &str = "/home/wyf/suiflow-relay/pool_related_ids.txt";
 
 pub fn pool_related_object_ids() -> DashSet<ObjectID> {
     let content = std::fs::read_to_string(POOL_RELATED_OBJECTS_PATH)
@@ -30,7 +30,7 @@ pub fn pool_related_object_ids() -> DashSet<ObjectID> {
     set
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CacheUpdateHandler {
     socket_path: PathBuf,
     connections: Arc<Mutex<Vec<UnixStream>>>,

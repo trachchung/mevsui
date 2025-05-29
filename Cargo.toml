@@ -649,7 +649,6 @@ anemo-tower = { git = "https://github.com/mystenlabs/anemo.git", rev = "9c52c3c7
 sui-sdk-types = { git = "https://github.com/MystenLabs/sui-rust-sdk.git", rev = "1c0e1f7bd994dc5a03322e8089d0fb3942662750", features = [
   "hash",
   "serde",
-    "schemars",
 ] }
 sui-graphql-client = { git = "https://github.com/MystenLabs/sui-rust-sdk.git", rev = "1c0e1f7bd994dc5a03322e8089d0fb3942662750", package = "sui-graphql-client" }
 

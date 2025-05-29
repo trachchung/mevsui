@@ -896,8 +896,8 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "tokio",
- "zstd 0.13.0",
- "zstd-safe 7.0.0",
+ "zstd 0.13.3",
+ "zstd-safe 7.2.1",
 ]
 
 [[package]]
@@ -4070,71 +4070,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fea41bba32d969b513997752735605054bc0dfa92b4c56bf1189f2e174be7a10"
 
 [[package]]
-name = "docker-api"
-version = "0.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "522a3ae33cf4fc165de192eb9c563b755bc43cda9bd6f442b2d511b84514b917"
-dependencies = [
- "asynchronous-codec",
- "base64 0.13.1",
- "byteorder",
- "bytes",
- "chrono",
- "containers-api",
- "docker-api-stubs",
- "futures-util",
- "http 0.2.9",
- "hyper 0.14.26",
- "log",
- "paste",
- "serde",
- "serde_json",
- "tar",
- "thiserror",
- "url",
-]
-
-[[package]]
-name = "docker-api-stubs"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5872f5e057625a972acce1a51b461284eab32b7e594e18f8fc2f63724075da47"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "serde_with 2.1.0",
-]
-
-[[package]]
 name = "doctest-file"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aac81fa3e28d21450aa4d2ac065992ba96a1d7303efbce51a95f4fd175b67562"
-
-[[package]]
-name = "documented"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "feadfed35b96a5634e08fc503677ded669549ae2cf7f0b01d5964f09d95487fd"
-dependencies = [
- "documented-macros",
- "phf",
- "thiserror",
-]
-
-[[package]]
-name = "documented-macros"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "973659d4a62084e32a7f9332509455436d33684b316bb3bc2bb6dcea51a68c63"
-dependencies = [
- "convert_case 0.6.0",
- "optfield",
- "proc-macro2 1.0.87",
- "quote 1.0.37",
- "syn 2.0.79",
-]
 
 [[package]]
 name = "dotenvy"
@@ -6616,15 +6555,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8bb03732005da905c88227371639bf1ad885cc712789c011c31c5fb3ab3ccf02"
 
 [[package]]
-name = "inventory"
-version = "0.3.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab08d7cd2c5897f2c949e5383ea7c7db03fb19130ffcfbf7eda795137ae3cb83"
-dependencies = [
- "rustversion",
-]
-
-[[package]]
 name = "interprocess"
 version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6637,6 +6567,15 @@ dependencies = [
  "tokio",
  "widestring 1.1.0",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "inventory"
+version = "0.3.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab08d7cd2c5897f2c949e5383ea7c7db03fb19130ffcfbf7eda795137ae3cb83"
+dependencies = [
+ "rustversion",
 ]
 
 [[package]]
@@ -7059,52 +6998,6 @@ dependencies = [
  "term",
  "tiny-keccak",
  "unicode-xid",
- "base64 0.22.1",
- "bytes",
- "chrono",
- "either",
- "futures",
- "home",
- "http 1.1.0",
- "http-body 1.0.1",
- "http-body-util",
- "hyper 1.4.1",
- "hyper-http-proxy",
- "hyper-rustls 0.27.2",
- "hyper-timeout 0.5.1",
- "hyper-util",
- "jsonpath-rust",
- "k8s-openapi",
- "kube-core",
- "pem 3.0.4",
- "rustls 0.23.12",
- "rustls-pemfile 2.1.2",
- "secrecy",
- "serde",
- "serde_json",
- "serde_yaml 0.9.21",
- "thiserror",
- "tokio",
- "tokio-util 0.7.10",
- "tower 0.5.1",
- "tower-http 0.6.2",
- "tracing",
-]
-
-[[package]]
-name = "kube-core"
-version = "0.96.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f42346d30bb34d1d7adc5c549b691bce7aa3a1e60254e68fab7e2d7b26fe3d77"
-dependencies = [
- "chrono",
- "form_urlencoded",
- "http 1.1.0",
- "k8s-openapi",
- "serde",
- "serde-value",
- "serde_json",
- "thiserror",
 ]
 
 [[package]]
@@ -8412,7 +8305,7 @@ dependencies = [
  "move-core-types",
  "serde",
  "serde_json",
- "zstd 0.13.2",
+ "zstd 0.13.3",
 ]
 
 [[package]]
@@ -8853,7 +8746,7 @@ dependencies = [
  "once_cell",
  "parking_lot 0.12.3",
  "thiserror 1.0.69",
- "widestring",
+ "widestring 0.5.1",
  "winapi",
 ]
 
@@ -9754,7 +9647,7 @@ dependencies = [
  "snap",
  "thrift",
  "twox-hash",
- "zstd 0.13.0",
+ "zstd 0.13.3",
  "zstd-sys",
 ]
 
@@ -13748,7 +13641,6 @@ dependencies = [
  "futures",
  "governor",
  "im",
- "indexmap 2.2.6",
  "interprocess",
  "itertools 0.13.0",
  "lru 0.10.0",
@@ -17579,7 +17471,7 @@ dependencies = [
  "tower-service",
  "tracing",
  "webpki-roots 0.26.3",
- "zstd 0.13.2",
+ "zstd 0.13.3",
 ]
 
 [[package]]
@@ -17761,24 +17653,6 @@ dependencies = [
  "tower-service",
  "tracing",
  "uuid 1.2.2",
-]
-
-[[package]]
-name = "tower-http"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "403fa3b783d4b626a8ad51d766ab03cb6d2dbfc46b1c5d4448395e6628dc9697"
-dependencies = [
- "base64 0.22.1",
- "bitflags 2.4.1",
- "bytes",
- "http 1.1.0",
- "http-body 1.0.1",
- "mime",
- "pin-project-lite",
- "tower-layer",
- "tower-service",
- "tracing",
 ]
 
 [[package]]
@@ -19355,11 +19229,11 @@ dependencies = [
 
 [[package]]
 name = "zstd"
-version = "0.13.0"
+version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bffb3309596d527cfcba7dfc6ed6052f1d39dfbd7c867aa2e865e4a449c10110"
+checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
 dependencies = [
- "zstd-safe 7.0.0",
+ "zstd-safe 7.2.1",
 ]
 
 [[package]]
@@ -19384,20 +19258,19 @@ dependencies = [
 
 [[package]]
 name = "zstd-safe"
-version = "7.0.0"
+version = "7.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43747c7422e2924c11144d5229878b98180ef8b06cca4ab5af37afc8a8d8ea3e"
+checksum = "54a3ab4db68cea366acc5c897c7b4d4d1b8994a9cd6e6f841f8964566a419059"
 dependencies = [
  "zstd-sys",
 ]
 
 [[package]]
 name = "zstd-sys"
-version = "2.0.8+zstd.1.5.5"
+version = "2.0.13+zstd.1.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5556e6ee25d32df2586c098bbfa278803692a20d0ab9565e049480d52707ec8c"
+checksum = "38ff0f21cfee8f97d94cef41359e0c89aa6113028ab0291aa8ca0038995a95aa"
 dependencies = [
  "cc",
- "libc",
  "pkg-config",
 ]

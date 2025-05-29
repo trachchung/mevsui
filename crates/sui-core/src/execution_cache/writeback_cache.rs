@@ -87,7 +87,7 @@ use sui_types::sui_system_state::{get_sui_system_state, SuiSystemState};
 use sui_types::transaction::{VerifiedSignedTransaction, VerifiedTransaction};
 use tap::TapOptional;
 use tracing::{debug, info, instrument, trace, warn};
-
+use typed_store::Map;
 use super::cache_types::Ticket;
 use super::ExecutionCacheAPI;
 use super::{
@@ -822,16 +822,16 @@ impl WritebackCache {
                     "marker_by_version",
                     "uncommitted",
                     dirty_entry,
-                    object_key.version()
-                    object_id
+                    object_key.version(),
+                    object_key.id().id()
                 );
                 check_cache_entry_by_version!(
                     self,
                     "marker_by_version",
                     "committed",
                     cached_entry,
-                    object_key.version()
-                    object_id
+                    object_key.version(),
+                    object_key.id().id()
                 );
                 CacheResult::Miss
             },
@@ -853,14 +853,14 @@ impl WritebackCache {
                     "marker_latest",
                     "uncommitted",
                     dirty_entry,
-                    object_id
+                    object_id.id()
                 );
                 check_cache_entry_by_latest!(
                     self,
                     "marker_latest",
                     "committed",
                     cached_entry,
-                    object_id
+                    object_id.id()
                 );
                 CacheResult::Miss
             },
@@ -2169,7 +2169,6 @@ impl ExecutionCacheWrite for WritebackCache {
         self.store
             .perpetual_tables
             .objects
-            .rocksdb
             .try_catch_up_with_primary()
             .unwrap();
 

@@ -87,6 +87,7 @@ impl WriteApiServer for WriteApi {
         self.fullnode
             .dry_run_transaction_block_override(tx_bytes, override_objects)
             .await
+            .map_err(crate::errors::client_error_to_error_object)
     }
 }
 

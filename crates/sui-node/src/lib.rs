@@ -244,7 +244,7 @@ pub struct SuiNode {
     http_servers: HttpServers,
 
     /// The http server responsible for serving JSON-RPC as well as the experimental rest service
-    _http_server: Option<tokio::task::JoinHandle<()>>,
+    // _http_server: Option<tokio::task::JoinHandle<()>>,
     _ipc_server: Option<tokio::task::JoinHandle<()>>,
     state: Arc<AuthorityState>,
     transaction_orchestrator: Option<Arc<TransactiondOrchestrator<NetworkAuthorityClient>>>,
@@ -2199,8 +2199,6 @@ async fn build_http_servers(
     transaction_orchestrator: &Option<Arc<TransactiondOrchestrator<NetworkAuthorityClient>>>,
     config: &NodeConfig,
     prometheus_registry: &Registry,
-    _custom_runtime: Option<Handle>,
-    software_version: &'static str,
     server_version: ServerVersion,
     metrics: Arc<JsonRpcMetrics>,
 ) -> Result<(

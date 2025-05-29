@@ -4,7 +4,7 @@ use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use crate::authority::authority_store;
 use crate::execution_cache::ObjectCacheRead;
 use crate::transaction_input_loader::TransactionInputLoader;
-use sui_types::base_types::ObjectID;
+use sui_types::base_types::{FullObjectID, FullObjectRef, ObjectID};
 use sui_types::base_types::ObjectRef;
 use sui_types::base_types::SequenceNumber;
 use sui_types::base_types::VersionNumber;
@@ -15,7 +15,7 @@ use sui_types::error::SuiResult;
 use sui_types::error::UserInputError;
 use sui_types::messages_checkpoint::CheckpointSequenceNumber;
 use sui_types::object::Object;
-use sui_types::storage::BackingPackageStore;
+use sui_types::storage::{BackingPackageStore, FullObjectKey};
 use sui_types::storage::BackingStore;
 use sui_types::storage::ChildObjectResolver;
 use sui_types::storage::ObjectKey;
@@ -72,7 +72,7 @@ impl InputLoaderCache<'_> {
                         {
                             input_results[i] = Some(ObjectReadResult {
                                 input_object_kind: *kind,
-                                object: ObjectReadResultKind::DeletedSharedObject(version, digest),
+                                object: ObjectReadResultKind::ObjectConsensusStreamEnded(version, digest),
                             });
                         } else {
                             return Err(SuiError::from(kind.object_not_found_error()));
@@ -117,8 +117,8 @@ impl InputLoaderCache<'_> {
         for objref in receiving_objects {
             // Note: the digest is checked later in check_transaction_input
             let (object_id, version, _) = objref;
-
-            if self.have_received_object_at_version(object_id, *version, epoch_id) {
+            let full_object_key = FullObjectKey::from(FullObjectRef::from_fastpath_ref(*objref));
+            if self.have_received_object_at_version(full_object_key, epoch_id) {
                 receiving_results.push(ReceivingObjectReadResult::new(
                     *objref,
                     ReceivingObjectReadResultKind::PreviouslyReceivedObject,
@@ -278,24 +278,23 @@ impl ObjectCacheRead for InputLoaderCache<'_> {
 
     fn get_marker_value(
         &self,
-        object_id: &ObjectID,
-        version: SequenceNumber,
-        epoch_id: EpochId,
+        object_key: FullObjectKey, 
+        epoch_id: EpochId
     ) -> Option<sui_types::storage::MarkerValue> {
         self.loader
             .cache
-            .get_marker_value(object_id, version, epoch_id)
+            .get_marker_value(object_key, epoch_id)
     }
 
     fn get_latest_marker(
         &self,
-        object_id: &ObjectID,
+        object_id: FullObjectID,
         epoch_id: EpochId,
     ) -> Option<(SequenceNumber, sui_types::storage::MarkerValue)> {
         self.loader.cache.get_latest_marker(object_id, epoch_id)
     }
 
-    fn get_highest_pruned_checkpoint(&self) -> CheckpointSequenceNumber {
+    fn get_highest_pruned_checkpoint(&self) -> Option<CheckpointSequenceNumber> {
         self.loader.cache.get_highest_pruned_checkpoint()
     }
 }

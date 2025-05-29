@@ -234,191 +234,11 @@ pub fn derive_dbmap_utils_general(input: TokenStream) -> TokenStream {
                 #generics_names: #generics_bounds_token,
             )*
         > #name #generics {
-                #(
-                    #generics_names: #generics_bounds_token,
-                )*
-            > #intermediate_db_map_struct_name #generics {
-            /// Opens the tables in read-only mode but returns an instance of the original struct.
-            /// All write operations will fail at runtime.
-            #[allow(unused_parens)]
-            pub fn open_tables_read_only_as_rw_impl(
-                path: std::path::PathBuf,
-                metric_conf: typed_store::rocks::MetricConf,
-            ) -> Self {
-                let p: std::path::PathBuf = tempfile::tempdir()
-                    .expect("Failed to open temporary directory")
-                    .into_path();
-
-                let inner = Self::open_tables_impl(
-                    path,
-                    Some(p),
-                    false,
-                    metric_conf,
-                    None,
-                    None,
-                    false,
-                );
-                Self {
-                    #(
-                        #field_names: #post_process_fn(inner.#field_names),
-                    )*
-                }
-            }
-
-            /// Opens a set of tables in read-write mode
-            /// If as_secondary_with_path is set, the DB is opened in read only mode with the path specified
-            pub fn open_tables_impl(
-                path: std::path::PathBuf,
-                as_secondary_with_path: Option<std::path::PathBuf>,
-                is_transaction: bool,
-                metric_conf: typed_store::rocks::MetricConf,
-                global_db_options_override: Option<typed_store::rocksdb::Options>,
-                tables_db_options_override: Option<typed_store::rocks::DBMapTableConfigMap>,
-                remove_deprecated_tables: bool,
-            ) -> Self {
-                let path = &path;
-                let default_cf_opt = if let Some(opt) = global_db_options_override.as_ref() {
-                    typed_store::rocks::DBOptions {
-                        options: opt.clone(),
-                        rw_options: typed_store::rocks::default_db_options().rw_options,
-                    }
-                } else {
-                    typed_store::rocks::default_db_options()
-                };
-                let (db, rwopt_cfs) = {
-                    let opt_cfs = match tables_db_options_override {
-                        None => [
-                            #(
-                                (stringify!(#cf_names).to_owned(), #default_options_override_fn_names()),
-                            )*
-                        ],
-                        Some(o) => [
-                            #(
-                                (stringify!(#cf_names).to_owned(), o.to_map().get(stringify!(#cf_names)).unwrap_or(&default_cf_opt).clone()),
-                            )*
-                        ]
-                    };
-                    // Safe to call unwrap because we will have at least one field_name entry in the struct
-                    let rwopt_cfs: std::collections::HashMap<String, typed_store::rocks::ReadWriteOptions> = opt_cfs.iter().map(|q| (q.0.as_str().to_string(), q.1.rw_options.clone())).collect();
-                    let opt_cfs: Vec<_> = opt_cfs.iter().map(|q| (q.0.as_str(), q.1.options.clone())).collect();
-                    let db = match (as_secondary_with_path.clone(), is_transaction) {
-                        (Some(p), _) => typed_store::rocks::open_cf_opts_secondary(path, Some(&p), global_db_options_override, metric_conf, &opt_cfs),
-                        (_, true) => typed_store::rocks::open_cf_opts_transactional(path, global_db_options_override, metric_conf, &opt_cfs),
-                        _ => typed_store::rocks::open_cf_opts(path, global_db_options_override, metric_conf, &opt_cfs)
-                    };
-                    db.map(|d| (d, rwopt_cfs))
-                }.expect(&format!("Cannot open DB at {:?}", path));
-                let deprecated_tables = vec![#(stringify!(#deprecated_cfs),)*];
-                let (
-                        #(
-                            #field_names
-                        ),*
-                ) = (#(
-                        DBMap::#inner_types::reopen(&db, Some(stringify!(#cf_names)), rwopt_cfs.get(stringify!(#cf_names)).unwrap_or(&typed_store::rocks::ReadWriteOptions::default()), remove_deprecated_tables && deprecated_tables.contains(&stringify!(#cf_names))).expect(&format!("Cannot open {} CF.", stringify!(#cf_names))[..])
-                    ),*);
-
-                if as_secondary_with_path.is_none() && remove_deprecated_tables {
-                    #(
-                        db.drop_cf(stringify!(#deprecated_cfs)).expect("failed to drop a deprecated cf");
-                    )*
-                }
-                Self {
-                    #(
-                        #field_names,
-                    )*
-                }
-            }
-        }
-
-
-        // <----------- This section generates the read-write open logic and other common utils -------------->
-
-        impl <
-                #(
-                    #generics_names: #generics_bounds_token,
-                )*
-            > #name #generics {
-            /// Opens a set of tables in read-write mode
-            /// Only one process is allowed to do this at a time
-            /// `global_db_options_override` apply to the whole DB
-            /// `tables_db_options_override` apply to each table. If `None`, the attributes from `default_options_override_fn` are used if any
-            #[allow(unused_parens)]
-            pub fn open_tables_read_write(
-                path: std::path::PathBuf,
-                metric_conf: typed_store::rocks::MetricConf,
-                global_db_options_override: Option<typed_store::rocksdb::Options>,
-                tables_db_options_override: Option<typed_store::rocks::DBMapTableConfigMap>
-            ) -> Self {
-                let inner = #intermediate_db_map_struct_name::open_tables_impl(path, None, false, metric_conf, global_db_options_override, tables_db_options_override, false);
-                Self {
-                    #(
-                        #field_names: #post_process_fn(inner.#field_names),
-                    )*
-                }
-            }
-
-            #[allow(unused_parens)]
-            pub fn open_tables_read_write_with_deprecation_option(
-                path: std::path::PathBuf,
-                metric_conf: typed_store::rocks::MetricConf,
-                global_db_options_override: Option<typed_store::rocksdb::Options>,
-                tables_db_options_override: Option<typed_store::rocks::DBMapTableConfigMap>,
-                remove_deprecated_tables: bool,
-            ) -> Self {
-                let inner = #intermediate_db_map_struct_name::open_tables_impl(path, None, false, metric_conf, global_db_options_override, tables_db_options_override, remove_deprecated_tables);
-                Self {
-                    #(
-                        #field_names: #post_process_fn(inner.#field_names),
-                    )*
-                }
-            }
-
-            /// Opens a set of tables in transactional read-write mode
-            /// Only one process is allowed to do this at a time
-            /// `global_db_options_override` apply to the whole DB
-            /// `tables_db_options_override` apply to each table. If `None`, the attributes from `default_options_override_fn` are used if any
-            #[allow(unused_parens)]
-            pub fn open_tables_transactional(
-                path: std::path::PathBuf,
-                metric_conf: typed_store::rocks::MetricConf,
-                global_db_options_override: Option<typed_store::rocksdb::Options>,
-                tables_db_options_override: Option<typed_store::rocks::DBMapTableConfigMap>
-            ) -> Self {
-                let inner = #intermediate_db_map_struct_name::open_tables_impl(path, None, true, metric_conf, global_db_options_override, tables_db_options_override, false);
-                Self {
-                    #(
-                        #field_names: #post_process_fn(inner.#field_names),
-                    )*
-                }
-            }
-
             /// Returns a list of the tables name and type pairs
             pub fn describe_tables() -> std::collections::BTreeMap<String, (String, String)> {
                 vec![#(
                     (stringify!(#field_names).to_owned(), (stringify!(#key_names).to_owned(), stringify!(#value_names).to_owned())),
                 )*].into_iter().collect()
-            }
-
-            /// This opens the DB in read only mode and returns a struct which exposes debug features
-            pub fn get_read_only_handle (
-                primary_path: std::path::PathBuf,
-                with_secondary_path: Option<std::path::PathBuf>,
-                global_db_options_override: Option<typed_store::rocksdb::Options>,
-                metric_conf: typed_store::rocks::MetricConf,
-                ) -> #secondary_db_map_struct_name #generics {
-                #secondary_db_map_struct_name::open_tables_read_only(primary_path, with_secondary_path, metric_conf, global_db_options_override)
-            }
-
-            pub fn get_rw_handle_readonly_inner (
-                primary_path: std::path::PathBuf,
-                metric_conf: typed_store::rocks::MetricConf,
-            ) -> Self {
-                let inner = #intermediate_db_map_struct_name::open_tables_read_only_as_rw_impl(primary_path, metric_conf);
-                Self {
-                    #(
-                        #field_names: #post_process_fn(inner.#field_names),
-                    )*
-                }
             }
         }
     };
@@ -531,6 +351,30 @@ pub fn derive_dbmap_utils_general(input: TokenStream) -> TokenStream {
                         #generics_names: #generics_bounds_token,
                     )*
                 > #intermediate_db_map_struct_name #generics {
+                /// Opens the tables in read-only mode but returns an instance of the original struct.
+                /// All write operations will fail at runtime.
+                #[allow(unused_parens)]
+                pub fn open_tables_read_only_as_rw_impl(
+                    path: std::path::PathBuf,
+                    metric_conf: typed_store::rocks::MetricConf,
+                    cf_configs: std::collections::BTreeMap<String, typed_store::tidehunter_util::ThConfig>,
+                ) -> Self {
+                    let p: std::path::PathBuf = tempfile::tempdir()
+                        .expect("Failed to open temporary directory")
+                        .into_path();
+
+                    let inner = Self::open_tables_impl(
+                        path,
+                        metric_conf,
+                        cf_configs
+                    );
+                    Self {
+                        #(
+                            #field_names: inner.#field_names,
+                        )*
+                    }
+                }
+
                 /// Opens a set of tables in read-write mode
                 /// If as_secondary_with_path is set, the DB is opened in read only mode with the path specified
                 pub fn open_tables_impl(
@@ -601,6 +445,13 @@ pub fn derive_dbmap_utils_general(input: TokenStream) -> TokenStream {
                 ) -> #secondary_db_map_struct_name #generics {
                     unimplemented!("read only mode is not supported for TideHunter");
                 }
+
+                pub fn get_rw_handle_readonly_inner (
+                    _: std::path::PathBuf,
+                    _: typed_store::rocks::MetricConf,
+                ) -> Self {
+                    unimplemented!("read only mode is not supported for TideHunter");
+                }
             }
 
             pub struct #secondary_db_map_struct_name;
@@ -614,6 +465,32 @@ pub fn derive_dbmap_utils_general(input: TokenStream) -> TokenStream {
                         #generics_names: #generics_bounds_token,
                     )*
                 > #intermediate_db_map_struct_name #generics {
+                /// Opens the tables in read-only mode but returns an instance of the original struct.
+                /// All write operations will fail at runtime.
+                #[allow(unused_parens)]
+                pub fn open_tables_read_only_as_rw_impl(
+                    path: std::path::PathBuf,
+                    metric_conf: typed_store::rocks::MetricConf,
+                ) -> Self {
+                    let p: std::path::PathBuf = tempfile::tempdir()
+                        .expect("Failed to open temporary directory")
+                        .into_path();
+
+                    let inner = Self::open_tables_impl(
+                        path,
+                        Some(p),
+                        metric_conf,
+                        None,
+                        None,
+                        false,
+                    );
+                    Self {
+                        #(
+                            #field_names: inner.#field_names,
+                        )*
+                    }
+                }
+
                 /// Opens a set of tables in read-write mode
                 /// If as_secondary_with_path is set, the DB is opened in read only mode with the path specified
                 pub fn open_tables_impl(
@@ -726,6 +603,18 @@ pub fn derive_dbmap_utils_general(input: TokenStream) -> TokenStream {
                     metric_conf: typed_store::rocks::MetricConf,
                     ) -> #secondary_db_map_struct_name #generics {
                     #secondary_db_map_struct_name::open_tables_read_only(primary_path, with_secondary_path, metric_conf, global_db_options_override)
+                }
+
+                pub fn get_rw_handle_readonly_inner (
+                    primary_path: std::path::PathBuf,
+                    metric_conf: typed_store::rocks::MetricConf,
+                ) -> Self {
+                    let inner = #intermediate_db_map_struct_name::open_tables_read_only_as_rw_impl(primary_path, metric_conf);
+                    Self {
+                        #(
+                            #field_names: inner.#field_names,
+                        )*
+                    }
                 }
             }
             #secondary_code

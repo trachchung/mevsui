@@ -136,10 +136,10 @@ impl ExecutionCacheMetrics {
     ) {
         if let Some(id) = object_id {
             if !MOCK_IDS.contains(&id.to_string().as_str()) {
-                debug!(target: "cache_metrics", "Cache miss: {} {} object_id: {}", request_type, level, id);
+                trace!(target: "cache_metrics", "Cache miss: {} {} object_id: {}", request_type, level, id);
             }
         } else {
-            debug!(target: "cache_metrics", "Cache miss: {} {}", request_type, level);
+            trace!(target: "cache_metrics", "Cache miss: {} {}", request_type, level);
         }
         self.cache_misses
             .with_label_values(&[request_type, level])

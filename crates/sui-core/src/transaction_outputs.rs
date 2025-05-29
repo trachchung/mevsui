@@ -9,7 +9,6 @@ use sui_types::committee::EpochId;
 use sui_types::effects::{TransactionEffects, TransactionEffectsAPI, TransactionEvents};
 use sui_types::inner_temporary_store::{InnerTemporaryStore, WrittenObjects};
 use sui_types::storage::{FullObjectKey, MarkerValue, ObjectKey};
-use sui_types::transaction::{TransactionDataAPI, VerifiedTransaction};
 use sui_types::message_envelope::{Envelope, VerifiedEnvelope};
 use sui_types::transaction::{Transaction, TransactionDataAPI, VerifiedTransaction};
 
@@ -33,7 +32,7 @@ pub struct SerializableTransactionOutputs {
     effects: TransactionEffects,
     events: TransactionEvents,
 
-    pub markers: Vec<(ObjectKey, MarkerValue)>,
+    pub markers: Vec<(FullObjectKey, MarkerValue)>,
     pub wrapped: Vec<ObjectKey>,
     pub deleted: Vec<ObjectKey>,
     pub locks_to_delete: Vec<ObjectRef>,

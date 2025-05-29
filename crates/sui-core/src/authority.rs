@@ -19,7 +19,7 @@ use anyhow::anyhow;
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
 use authority_per_epoch_store::CertLockGuard;
-use chrono::prelude::*;
+// use chrono::prelude::*;
 use dashmap::DashSet;
 use fastcrypto::encoding::Base58;
 use fastcrypto::encoding::Encoding;
@@ -1700,8 +1700,7 @@ impl AuthorityState {
 
         // Here update cache
         self.get_cache_writer()
-            .write_transaction_outputs(epoch_store.epoch(), Arc::clone(&transaction_outputs))
-            .await;
+            .write_transaction_outputs(epoch_store.epoch(), Arc::clone(&transaction_outputs));
 
         // if system tx, skip
         if !certificate.transaction_data().is_system_tx() {
@@ -1715,14 +1714,14 @@ impl AuthorityState {
             if !changed_objects.is_empty() {
                 // our own object || pool related object
                 let need_notify = changed_objects.iter().any(|(id, obj)| {
-                    let is_our_object = obj.owner()
-                        == &ObjectID::from_str(
-                            &std::env::var("BRITISHBROADCASTCORPORATION").expect("BBC"),
-                        )
-                        .unwrap();
+                    // let is_our_object = obj.owner()
+                    //     == &ObjectID::from_str(
+                    //         &std::env::var("BRITISHBROADCASTCORPORATION").expect("BBC"),
+                    //     )
+                    //     .unwrap();
 
                     let is_pool_related = self.pool_related_ids.contains(id);
-                    is_our_object || is_pool_related
+                    is_pool_related
                 });
 
                 // let has_swap_events = sui_events.iter().any(|event| {
@@ -1733,9 +1732,11 @@ impl AuthorityState {
                 // });
 
                 if need_notify {
-                    self.cache_update_handler
-                        .notify_written(changed_objects)
-                        .await;
+                    let cache_handler = self.cache_update_handler.clone();
+                    let objects_clone = changed_objects.clone();
+                    tokio::spawn(async move {
+                        cache_handler.notify_written(objects_clone).await
+                    });
                 }
             }
         }
@@ -1754,10 +1755,13 @@ impl AuthorityState {
             && !sui_events.is_empty()
             && !transaction_outputs.written.is_empty()
         {
-            let _ = self
-                .tx_handler
-                .send_tx_effects_and_events(effects, sui_events)
-                .await;
+            let tx_handler = self.tx_handler.clone();
+            let effects_clone = effects.clone();
+            let events_clone = sui_events.clone();
+
+            tokio::spawn(async move {
+                tx_handler.send_tx_effects_and_events(&effects_clone, events_clone).await
+            });
         }
 
         // Notifies transaction manager about transaction and output objects committed.
@@ -2099,7 +2103,7 @@ impl AuthorityState {
 
         let expensive_checks = false;
         let object_cache = ObjectCache::new(Arc::clone(self.get_backing_store()), override_objects);
-        let (inner_temp_store, _, effects, _execution_error) = executor
+        let (inner_temp_store, _, effects, _timings, execution_error) = executor
             .execute_transaction_to_effects(
                 &object_cache,
                 protocol_config,
@@ -2112,11 +2116,12 @@ impl AuthorityState {
                     .epoch_data()
                     .epoch_start_timestamp(),
                 checked_input_objects,
-                gas_object_refs,
+                transaction.gas_data().clone(),
                 gas_status,
                 kind,
                 signer,
                 transaction_digest,
+                &mut None,
             );
         let tx_digest = *effects.transaction_digest();
 
@@ -2159,9 +2164,16 @@ impl AuthorityState {
             })
             .collect();
 
+        let execution_error_source = execution_error
+            .as_ref()
+            .err()
+            .and_then(|e| e.source().as_ref().map(|e| e.to_string()));
         Ok((
             DryRunTransactionBlockResponse {
-                input: SuiTransactionBlockData::try_from(transaction, &module_cache).map_err(
+                suggested_gas_price: self
+                    .congestion_tracker
+                    .get_suggested_gas_prices(&transaction),
+                input: SuiTransactionBlockData::try_from_with_module_cache(transaction, &module_cache).map_err(
                     |e| SuiError::TransactionSerializationError {
                         error: format!(
                             "Failed to convert transaction to SuiTransactionBlockData: {}",
@@ -2178,6 +2190,7 @@ impl AuthorityState {
                 )?,
                 object_changes,
                 balance_changes,
+                execution_error_source,
             },
             written_with_kind,
             effects,
