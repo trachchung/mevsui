@@ -19,9 +19,10 @@ use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
 use std::time::Duration;
-use tokio::time::Instant;
-use tracing::{error, warn};
+use tokio::time::{sleep, Instant};
+use tracing::{error, info, warn};
 use url::Url;
 
 pub const MANIFEST_FILENAME: &str = "MANIFEST";
@@ -77,15 +78,69 @@ impl PerEpochManifest {
     }
 }
 
+
+/// 最大重试次数配置
+const MAX_RETRY_ATTEMPTS: u32 = u32::MAX; // 实际上是无限重试，但为了安全设置一个极大值
+/// 初始重试延迟（毫秒）
+const INITIAL_RETRY_DELAY_MS: u64 = 500;
+/// 最大重试延迟（秒）
+const MAX_RETRY_DELAY_SEC: u64 = 30;
+
+
+/// 创建自定义的重试策略，返回每次重试的等待时间
+fn get_retry_delay(attempt: u32) -> Duration {
+    let base_delay_ms = INITIAL_RETRY_DELAY_MS;
+    let max_delay_ms = MAX_RETRY_DELAY_SEC * 1000;
+
+    // 计算当前重试的延迟（指数退避，但有上限）
+    let delay_ms = std::cmp::min(
+        base_delay_ms * 2u64.pow(attempt),
+        max_delay_ms
+    );
+
+    Duration::from_millis(delay_ms)
+}
+
 pub async fn get<S: ObjectStoreGetExt>(store: &S, src: &Path) -> Result<Bytes> {
-    let bytes = retry(backoff::ExponentialBackoff::default(), || async {
-        store.get_bytes(src).await.map_err(|e| {
-            error!("Failed to read file from object store with error: {:?}", &e);
-            backoff::Error::transient(e)
-        })
-    })
-    .await?;
-    Ok(bytes)
+    let mut attempt_counter = 0;
+
+    loop {
+        match store.get_bytes(src).await {
+            Ok(bytes) => {
+                // 成功获取数据
+                if attempt_counter > 0 {
+                    info!(
+                        "Successfully read file {} after {} retries",
+                        src, attempt_counter
+                    );
+                }
+                return Ok(bytes);
+            },
+            Err(e) => {
+                attempt_counter += 1;
+
+                if attempt_counter >= MAX_RETRY_ATTEMPTS {
+                    // 达到最大重试次数（实际上几乎不可能到达这个条件）
+                    return Err(anyhow::anyhow!(
+                        "Failed to read file {} after {} retries: {:?}",
+                        src, attempt_counter, e
+                    ));
+                }
+
+                // 获取当前重试的延迟
+                let retry_delay = get_retry_delay(attempt_counter);
+
+                error!(
+                    "Failed to read file {} (attempt {}/{}), will retry in {:?}: {:?}",
+                    src, attempt_counter, MAX_RETRY_ATTEMPTS, retry_delay, e
+                );
+
+                // 等待后重试
+                sleep(retry_delay).await;
+                // 继续循环尝试
+            }
+        }
+    }
 }
 
 pub async fn exists<S: ObjectStoreGetExt>(store: &S, src: &Path) -> bool {
@@ -93,19 +148,50 @@ pub async fn exists<S: ObjectStoreGetExt>(store: &S, src: &Path) -> bool {
 }
 
 pub async fn put<S: ObjectStorePutExt>(store: &S, src: &Path, bytes: Bytes) -> Result<()> {
-    retry(backoff::ExponentialBackoff::default(), || async {
-        if !bytes.is_empty() {
-            store.put_bytes(src, bytes.clone()).await.map_err(|e| {
-                error!("Failed to write file to object store with error: {:?}", &e);
-                backoff::Error::transient(e)
-            })
-        } else {
-            warn!("Not copying empty file: {:?}", src);
-            Ok(())
+    if bytes.is_empty() {
+        warn!("Not copying empty file: {:?}", src);
+        return Ok(());
+    }
+
+    let mut attempt_counter = 0;
+
+    loop {
+        match store.put_bytes(src, bytes.clone()).await {
+            Ok(_) => {
+                // 成功写入数据
+                if attempt_counter > 0 {
+                    info!(
+                        "Successfully wrote file {} after {} retries",
+                        src, attempt_counter
+                    );
+                }
+                return Ok(());
+            },
+            Err(e) => {
+                attempt_counter += 1;
+
+                if attempt_counter >= MAX_RETRY_ATTEMPTS {
+                    // 达到最大重试次数（几乎不可能）
+                    return Err(anyhow::anyhow!(
+                        "Failed to write file {} after {} retries: {:?}",
+                        src, attempt_counter, e
+                    ));
+                }
+
+                // 获取当前重试的延迟
+                let retry_delay = get_retry_delay(attempt_counter);
+
+                error!(
+                    "Failed to write file {} (attempt {}/{}), will retry in {:?}: {:?}",
+                    src, attempt_counter, MAX_RETRY_ATTEMPTS, retry_delay, e
+                );
+
+                // 等待后重试
+                sleep(retry_delay).await;
+                // 继续循环尝试
+            }
         }
-    })
-    .await?;
-    Ok(())
+    }
 }
 
 pub async fn copy_file<S: ObjectStoreGetExt, D: ObjectStorePutExt>(
