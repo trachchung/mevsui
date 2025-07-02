@@ -2,9 +2,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::congestion_tracker::CongestionTracker;
 use crate::cache_update_handler::pool_related_object_ids;
 use crate::cache_update_handler::CacheUpdateHandler;
+use crate::congestion_tracker::CongestionTracker;
 use crate::consensus_adapter::ConsensusOverloadChecker;
 use crate::execution_cache::ExecutionCacheTraitPointers;
 use crate::execution_cache::TransactionCacheRead;
@@ -1699,6 +1699,22 @@ impl AuthorityState {
             inner_temporary_store,
         ));
 
+        if !certificate.transaction_data().is_system_tx()
+            && !sui_events.is_empty()
+            && !transaction_outputs.written.is_empty()
+        {
+            let tx_handler = self.tx_handler.clone();
+            let effects_clone = effects.clone();
+            let events_clone = sui_events.clone();
+
+            tokio::spawn(async move {
+                info!("send_tx_effects_and_events");
+                tx_handler
+                    .send_tx_effects_and_events(&effects_clone, events_clone)
+                    .await
+            });
+        }
+
         let mut package_updates = Vec::new();
         for (id, object) in transaction_outputs.written.iter() {
             if object.is_package() {
@@ -1742,9 +1758,7 @@ impl AuthorityState {
                 if need_notify {
                     let cache_handler = self.cache_update_handler.clone();
                     let objects_clone = changed_objects.clone();
-                    tokio::spawn(async move {
-                        cache_handler.notify_written(objects_clone).await
-                    });
+                    tokio::spawn(async move { cache_handler.notify_written(objects_clone).await });
                 }
             }
         }
@@ -1758,19 +1772,6 @@ impl AuthorityState {
 
         // commit_certificate finished, the tx is fully committed to the store.
         tx_guard.commit_tx();
-
-        if !certificate.transaction_data().is_system_tx()
-            && !sui_events.is_empty()
-            && !transaction_outputs.written.is_empty()
-        {
-            let tx_handler = self.tx_handler.clone();
-            let effects_clone = effects.clone();
-            let events_clone = sui_events.clone();
-
-            tokio::spawn(async move {
-                tx_handler.send_tx_effects_and_events(&effects_clone, events_clone).await
-            });
-        }
 
         // Notifies transaction manager about transaction and output objects committed.
         // This provides necessary information to transaction manager to start executing
@@ -2181,14 +2182,16 @@ impl AuthorityState {
                 suggested_gas_price: self
                     .congestion_tracker
                     .get_suggested_gas_prices(&transaction),
-                input: SuiTransactionBlockData::try_from_with_module_cache(transaction, &module_cache).map_err(
-                    |e| SuiError::TransactionSerializationError {
-                        error: format!(
-                            "Failed to convert transaction to SuiTransactionBlockData: {}",
-                            e
-                        ),
-                    },
-                )?, // TODO: replace the underlying try_from to SuiError. This one goes deep
+                input: SuiTransactionBlockData::try_from_with_module_cache(
+                    transaction,
+                    &module_cache,
+                )
+                .map_err(|e| SuiError::TransactionSerializationError {
+                    error: format!(
+                        "Failed to convert transaction to SuiTransactionBlockData: {}",
+                        e
+                    ),
+                })?, // TODO: replace the underlying try_from to SuiError. This one goes deep
                 effects: effects.clone().try_into()?,
                 events: SuiTransactionBlockEvents::try_from(
                     inner_temp_store.events.clone(),
