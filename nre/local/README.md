@@ -55,84 +55,37 @@ network-key-pair:
   path: /opt/sui/key-pairs/network.key
 ```
 
-5. Place genesis.blob in `/opt/sui/config/` (should be available after the Genesis ceremony)
 
+
+```shell
+# Guide: https://moluuser.com/posts/sui-full-node/
+
+# Install all sui CLIs 
+# Go to https://github.com/MystenLabs/sui/releases 
+# Download latest tar file 
+tar -xvf sui-testnet-v1.51.2-ubuntu-x86_64.tgz -C ./path-to-folder
+# Add it to ~/.bashrc if you want
+
+# Downlaod snapshot free
+./sui-cli/sui-tool download-formal-snapshot --latest --genesis "/opt/sui/config/genesis.blob" \
+     --network mainnet \
+     --path /opt/sui/db --num-parallel-downloads 50 --no-sign-request
+
+# Make the sui-node binary executable
+chmod +x /opt/sui/bin/sui-node
+
+# Download genesis.blob and place it in `/opt/sui/config/`
 https://docs.sui.io/guides/operator/sui-full-node#setting-up-a-full-node
 
-chmod +x /opt/sui/bin/sui-node
+# Download snapshot and place it in `/opt/sui/db/`
+./sui-cli/sui-tool download-formal-snapshot --latest --genesis "/opt/sui/config/genesis.blob" \
+     --network mainnet \
+     --path /opt/sui/db --num-parallel-downloads 50 --no-sign-request
+
+# Copy `pool_related_ids.txt` in sui-mev repo to /opt/sui/pool_related_ids.txt
+
+# Run the node
+RUST_BACKTRACE=1
+RUST_LOG=info,sui_core=debug,consensus=debug,jsonrpsee=error
 /opt/sui/bin/sui-node --config-path /opt/sui/config/validator.yaml
-
-6. Copy the sui-node systemd service unit file 
-
-File: [sui-node.service](./sui-node.service)
-
-Copy the file to `/etc/systemd/system/sui-node.service`.
-
-7. Reload systemd with this new service unit file, run:
-
-```shell
-sudo systemctl daemon-reload
-```
-
-8. Enable the new service with systemd
-
-```shell
-sudo systemctl enable sui-node.service
-```
-
-## Connectivity
-
-You may need to explicitly open the ports outlined in [Sui for Node Operators](../sui_for_node_operators.md#connectivity) for the required Sui Node connectivity.
-
-## Start the node
-
-Start the Validator:
-
-```shell
-sudo systemctl start sui-node
-```
-
-Check that the node is up and running:
-
-```shell
-sudo systemctl status sui-node
-```
-
-Follow the logs with:
-
-```shell
-journalctl -u sui-node -f
-```
-
-## Updates
-
-When an update is required to the Sui Node software the following procedure can be used. It is highly **unlikely** that you will want to restart with a clean database.
-
-- assumes sui-node lives in `/opt/sui/bin/`
-- assumes systemd service is named sui-node
-- **DO NOT** delete the Sui databases
-
-1. Stop sui-node systemd service
-
-```
-sudo systemctl stop sui-node
-```
-
-2. Fetch the new sui-node binary
-
-```shell
-wget https://releases.sui.io/${SUI_SHA}/sui-node
-```
-
-3. Update and move the new binary:
-
-```
-chmod +x sui-node
-sudo mv sui-node /opt/sui/bin/
-```
-
-4. start sui-node systemd service
-
-```
-sudo systemctl start sui-node
 ```
