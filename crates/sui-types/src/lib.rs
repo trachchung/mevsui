@@ -73,6 +73,8 @@ pub mod nitro_attestation;
 pub mod object;
 pub mod passkey_authenticator;
 pub mod programmable_transaction_builder;
+pub mod proto_value;
+pub mod ptb_trace;
 pub mod quorum_driver_types;
 pub mod randomness_state;
 pub mod signature;

@@ -8,8 +8,8 @@ use sui_types::base_types::{FullObjectID, ObjectRef};
 use sui_types::committee::EpochId;
 use sui_types::effects::{TransactionEffects, TransactionEffectsAPI, TransactionEvents};
 use sui_types::inner_temporary_store::{InnerTemporaryStore, WrittenObjects};
-use sui_types::storage::{FullObjectKey, MarkerValue, ObjectKey};
 use sui_types::message_envelope::{Envelope, VerifiedEnvelope};
+use sui_types::storage::{FullObjectKey, InputKey, MarkerValue, ObjectKey};
 use sui_types::transaction::{Transaction, TransactionDataAPI, VerifiedTransaction};
 
 /// TransactionOutputs
@@ -24,6 +24,10 @@ pub struct TransactionOutputs {
     pub locks_to_delete: Vec<ObjectRef>,
     pub new_locks_to_init: Vec<ObjectRef>,
     pub written: WrittenObjects,
+
+    // Temporarily needed to notify TxManager about the availability of objects.
+    // TODO: Remove this once we ship the new ExecutionScheduler.
+    pub output_keys: Vec<InputKey>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -47,6 +51,8 @@ impl TransactionOutputs {
         effects: TransactionEffects,
         inner_temporary_store: InnerTemporaryStore,
     ) -> TransactionOutputs {
+        let output_keys = inner_temporary_store.get_output_keys(&effects);
+
         let InnerTemporaryStore {
             input_objects,
             stream_ended_consensus_objects,
@@ -57,11 +63,9 @@ impl TransactionOutputs {
             binary_config: _,
             runtime_packages_loaded_from_db: _,
             lamport_version,
-        } = inner_temporary_store;
+        } = inner_temporary_store.clone();
 
         let tx_digest = *transaction.digest();
-
-        let tombstones: HashMap<_, _> = effects.all_tombstones().into_iter().collect();
 
         // Get the actual set of objects that have been received -- any received
         // object will show up in the modified-at set.
@@ -77,28 +81,31 @@ impl TransactionOutputs {
         let markers: Vec<_> = {
             let received = received_objects.clone().map(|objref| {
                 (
-                    // TODO: Add support for receiving ConsensusV2 objects. For now this assumes fastpath.
+                    // TODO: Add support for receiving consensus objects. For now this assumes fastpath.
                     FullObjectKey::new(FullObjectID::new(objref.0, None), objref.1),
                     MarkerValue::Received,
                 )
             });
 
-            let tombstones = tombstones.into_iter().map(|(object_id, version)| {
-                let consensus_key = input_objects
-                    .get(&object_id)
-                    .filter(|o| o.is_consensus())
-                    .map(|o| FullObjectKey::new(o.full_id(), version));
-                if let Some(consensus_key) = consensus_key {
-                    (consensus_key, MarkerValue::ConsensusStreamEnded(tx_digest))
-                } else {
-                    (
-                        FullObjectKey::new(FullObjectID::new(object_id, None), version),
-                        MarkerValue::FastpathStreamEnded,
-                    )
-                }
-            });
+            let tombstones = effects
+                .all_tombstones()
+                .into_iter()
+                .map(|(object_id, version)| {
+                    let consensus_key = input_objects
+                        .get(&object_id)
+                        .filter(|o| o.is_consensus())
+                        .map(|o| FullObjectKey::new(o.full_id(), version));
+                    if let Some(consensus_key) = consensus_key {
+                        (consensus_key, MarkerValue::ConsensusStreamEnded(tx_digest))
+                    } else {
+                        (
+                            FullObjectKey::new(FullObjectID::new(object_id, None), version),
+                            MarkerValue::FastpathStreamEnded,
+                        )
+                    }
+                });
 
-            let transferred_to_consensus =
+            let fastpath_stream_ended =
                 effects
                     .transferred_to_consensus()
                     .into_iter()
@@ -116,19 +123,19 @@ impl TransactionOutputs {
                         )
                     });
 
-            let transferred_from_consensus =
-                effects
-                    .transferred_from_consensus()
-                    .into_iter()
-                    .map(|(object_id, version, _)| {
-                        let object = input_objects
-                            .get(&object_id)
-                            .expect("object transferred from consensus must be in input_objects");
-                        (
-                            FullObjectKey::new(object.full_id(), version),
-                            MarkerValue::ConsensusStreamEnded(tx_digest),
-                        )
-                    });
+            let consensus_stream_ended = effects
+                .transferred_from_consensus()
+                .into_iter()
+                .chain(effects.consensus_owner_changed())
+                .map(|(object_id, version, _)| {
+                    let object = input_objects
+                        .get(&object_id)
+                        .expect("stream-ended object must be in input_objects");
+                    (
+                        FullObjectKey::new(object.full_id(), version),
+                        MarkerValue::ConsensusStreamEnded(tx_digest),
+                    )
+                });
 
             // We "smear" removed consensus objects in the marker table to allow for proper
             // sequencing of transactions that are submitted after the consensus stream ends.
@@ -154,8 +161,8 @@ impl TransactionOutputs {
 
             received
                 .chain(tombstones)
-                .chain(transferred_to_consensus)
-                .chain(transferred_from_consensus)
+                .chain(fastpath_stream_ended)
+                .chain(consensus_stream_ended)
                 .chain(consensus_smears)
                 .collect()
         };
@@ -198,6 +205,7 @@ impl TransactionOutputs {
             locks_to_delete,
             new_locks_to_init,
             written,
+            output_keys,
         }
     }
 
@@ -221,19 +229,20 @@ impl TransactionOutputs {
         bcs::to_bytes(&to_serialize).expect("Failed to serialize TransactionOutputs")
     }
 
-    pub fn from_serializable(serializable: SerializableTransactionOutputs) -> Self {
-        let verified_transaction = VerifiedEnvelope::new_unchecked(serializable.transaction);
+    // pub fn from_serializable(serializable: SerializableTransactionOutputs) -> Self {
+    //     let verified_transaction = VerifiedEnvelope::new_unchecked(serializable.transaction);
 
-        Self {
-            transaction: Arc::new(verified_transaction),
-            effects: serializable.effects,
-            events: serializable.events,
-            markers: serializable.markers,
-            wrapped: serializable.wrapped,
-            deleted: serializable.deleted,
-            locks_to_delete: serializable.locks_to_delete,
-            new_locks_to_init: serializable.new_locks_to_init,
-            written: serializable.written,
-        }
-    }
+    //     Self {
+    //         transaction: Arc::new(verified_transaction),
+    //         effects: serializable.effects,
+    //         events: serializable.events,
+    //         markers: serializable.markers,
+    //         wrapped: serializable.wrapped,
+    //         deleted: serializable.deleted,
+    //         locks_to_delete: serializable.locks_to_delete,
+    //         new_locks_to_init: serializable.new_locks_to_init,
+    //         written: serializable.written,
+    //         output_keys: serializable.output_keys,
+    //     }
+    // }
 }

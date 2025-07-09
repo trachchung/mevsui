@@ -1,14 +1,14 @@
-use std::collections::HashSet;
-use std::sync::Arc;
-use anemo::codegen::BoxFuture;
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use crate::authority::authority_store;
 use crate::execution_cache::ObjectCacheRead;
 use crate::transaction_input_loader::TransactionInputLoader;
-use sui_types::base_types::{FullObjectID, FullObjectRef, ObjectID};
+use anemo::codegen::BoxFuture;
+use std::collections::HashSet;
+use std::sync::Arc;
 use sui_types::base_types::ObjectRef;
 use sui_types::base_types::SequenceNumber;
 use sui_types::base_types::VersionNumber;
+use sui_types::base_types::{FullObjectID, FullObjectRef, ObjectID};
 use sui_types::committee::EpochId;
 use sui_types::digests::TransactionDigest;
 use sui_types::error::SuiError;
@@ -16,7 +16,6 @@ use sui_types::error::SuiResult;
 use sui_types::error::UserInputError;
 use sui_types::messages_checkpoint::CheckpointSequenceNumber;
 use sui_types::object::Object;
-use sui_types::storage::{BackingPackageStore, FullObjectKey, InputKey};
 use sui_types::storage::BackingStore;
 use sui_types::storage::ChildObjectResolver;
 use sui_types::storage::ObjectKey;
@@ -24,6 +23,7 @@ use sui_types::storage::ObjectOrTombstone;
 use sui_types::storage::ObjectStore;
 use sui_types::storage::PackageObject;
 use sui_types::storage::ParentSync;
+use sui_types::storage::{BackingPackageStore, FullObjectKey, InputKey};
 use sui_types::sui_system_state::SuiSystemState;
 use sui_types::transaction::InputObjectKind;
 use sui_types::transaction::InputObjects;
@@ -73,7 +73,9 @@ impl InputLoaderCache<'_> {
                         {
                             input_results[i] = Some(ObjectReadResult {
                                 input_object_kind: *kind,
-                                object: ObjectReadResultKind::ObjectConsensusStreamEnded(version, digest),
+                                object: ObjectReadResultKind::ObjectConsensusStreamEnded(
+                                    version, digest,
+                                ),
                             });
                         } else {
                             return Err(SuiError::from(kind.object_not_found_error()));
@@ -279,12 +281,10 @@ impl ObjectCacheRead for InputLoaderCache<'_> {
 
     fn get_marker_value(
         &self,
-        object_key: FullObjectKey, 
-        epoch_id: EpochId
+        object_key: FullObjectKey,
+        epoch_id: EpochId,
     ) -> Option<sui_types::storage::MarkerValue> {
-        self.loader
-            .cache
-            .get_marker_value(object_key, epoch_id)
+        self.loader.cache.get_marker_value(object_key, epoch_id)
     }
 
     fn get_latest_marker(
@@ -299,7 +299,16 @@ impl ObjectCacheRead for InputLoaderCache<'_> {
         self.loader.cache.get_highest_pruned_checkpoint()
     }
 
-    fn notify_read_input_objects<'a>(&'a self, input_and_receiving_keys: &'a [InputKey], receiving_keys: &'a HashSet<InputKey>, epoch: &'a EpochId) -> BoxFuture<'a, Vec<()>> {
+    fn notify_read_input_objects<'a>(
+        &'a self,
+        input_and_receiving_keys: &'a [InputKey],
+        receiving_keys: &'a HashSet<InputKey>,
+        epoch: &'a EpochId,
+    ) -> BoxFuture<'a, ()> {
+        todo!()
+    }
+
+    fn multi_input_objects_available_cache_only(&self, keys: &[InputKey]) -> Vec<bool> {
         todo!()
     }
 }

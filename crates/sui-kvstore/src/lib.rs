@@ -6,6 +6,7 @@ use async_trait::async_trait;
 pub use bigtable::client::BigTableClient;
 pub use bigtable::progress_store::BigTableProgressStore;
 pub use bigtable::worker::KvWorker;
+use serde::{Deserialize, Serialize};
 use sui_types::base_types::ObjectID;
 use sui_types::committee::EpochId;
 use sui_types::crypto::AuthorityStrongQuorumSignInfo;
@@ -38,6 +39,7 @@ pub trait KeyValueStoreReader {
     async fn get_latest_checkpoint_summary(&mut self) -> Result<Option<CheckpointSummary>>;
     async fn get_latest_object(&mut self, object_id: &ObjectID) -> Result<Option<Object>>;
     async fn get_epoch(&mut self, epoch_id: EpochId) -> Result<Option<EpochInfo>>;
+    async fn get_latest_epoch(&mut self) -> Result<Option<EpochInfo>>;
 }
 
 #[async_trait]
@@ -49,14 +51,14 @@ pub trait KeyValueStoreWriter {
     async fn save_epoch(&mut self, epoch: EpochInfo) -> Result<()>;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Checkpoint {
     pub summary: CheckpointSummary,
     pub contents: CheckpointContents,
     pub signatures: AuthorityStrongQuorumSignInfo,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionData {
     pub transaction: Transaction,
     pub effects: TransactionEffects,

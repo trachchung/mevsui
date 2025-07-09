@@ -384,10 +384,7 @@ fn resolve_ptb(
 
     ProgrammableTransaction {
         inputs,
-        commands: commands
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<_, _>>()?,
+        commands: commands.into_iter().map(Into::into).collect(),
     }
     .pipe(Ok)
 }
@@ -565,7 +562,8 @@ fn resolve_object(
             }
             .pipe(Ok)
         }
-        sui_types::object::Owner::Shared { .. } | sui_types::object::Owner::ConsensusV2 { .. } => {
+        sui_types::object::Owner::Shared { .. }
+        | sui_types::object::Owner::ConsensusAddressOwner { .. } => {
             resolve_shared_input_with_object(called_packages, commands, arg_idx, object)
         }
         sui_types::object::Owner::ObjectOwner(_) => Err(RpcError::new(
@@ -668,7 +666,7 @@ fn resolve_shared_input_with_object(
     let initial_shared_version = if let sui_types::object::Owner::Shared {
         initial_shared_version,
     }
-    | sui_types::object::Owner::ConsensusV2 {
+    | sui_types::object::Owner::ConsensusAddressOwner {
         start_version: initial_shared_version,
         ..
     } = object.owner()
@@ -809,6 +807,9 @@ fn select_gas(
         .indexes()
         .ok_or_else(RpcError::not_found)?
         .owned_objects_iter(owner, Some(GasCoin::type_()), None)?
+        // filter for objects which are not ConsensusAddress owned,
+        // since only Address owned can be used for gas payments today
+        .filter_ok(|info| info.start_version.is_none())
         .filter_ok(|info| !input_objects.contains(&info.object_id))
         .filter_map_ok(|info| reader.inner().get_object(&info.object_id))
         .filter_map_ok(|object| {

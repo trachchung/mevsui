@@ -466,7 +466,7 @@ impl SuiNode {
         );
 
         // Initialize metrics to track db usage before creating any stores
-        DBMetrics::init(&prometheus_registry);
+        DBMetrics::init(registry_service.clone());
 
         // Initialize Mysten metrics.
         mysten_metrics::init_metrics(&prometheus_registry);
@@ -1404,11 +1404,11 @@ impl SuiNode {
                     state.clone(),
                     consensus_adapter.clone(),
                     checkpoint_service.clone(),
-                    state.transaction_manager().clone(),
                     sui_tx_validator_metrics.clone(),
                 ),
             )
             .await;
+        let consensus_replay_waiter = consensus_manager.replay_waiter();
 
         if !epoch_store
             .epoch_start_config()
@@ -1420,7 +1420,7 @@ impl SuiNode {
         }
 
         info!("Spawning checkpoint service");
-        let checkpoint_service_tasks = checkpoint_service.spawn().await;
+        let checkpoint_service_tasks = checkpoint_service.spawn(consensus_replay_waiter).await;
 
         if epoch_store.authenticator_state_enabled() {
             Self::start_jwk_updater(

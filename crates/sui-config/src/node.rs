@@ -172,7 +172,10 @@ pub struct NodeConfig {
     pub run_with_range: Option<RunWithRange>,
 
     // For killswitch use None
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default = "default_traffic_controller_policy_config"
+    )]
     pub policy_config: Option<PolicyConfig>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -248,13 +251,13 @@ pub struct ExecutionTimeObserverConfig {
     /// Unless target object utilization is exceeded by at least this amount, no observation
     /// will be shared with consensus.
     ///
-    /// If unspecified, this will default to `100` milliseconds.
+    /// If unspecified, this will default to `500` milliseconds.
     pub observation_sharing_object_utilization_threshold: Option<Duration>,
 
     /// Unless the current local observation differs from the last one we shared by at least this
     /// percentage, no observation will be shared with consensus.
     ///
-    /// If unspecified, this will default to `0.05`.
+    /// If unspecified, this will default to `0.1`.
     pub observation_sharing_diff_threshold: Option<f64>,
 
     /// Minimum interval between sharing multiple observations of the same key.
@@ -301,11 +304,11 @@ impl ExecutionTimeObserverConfig {
 
     pub fn observation_sharing_object_utilization_threshold(&self) -> Duration {
         self.observation_sharing_object_utilization_threshold
-            .unwrap_or(Duration::from_millis(100))
+            .unwrap_or(Duration::from_millis(500))
     }
 
     pub fn observation_sharing_diff_threshold(&self) -> f64 {
-        self.observation_sharing_diff_threshold.unwrap_or(0.05)
+        self.observation_sharing_diff_threshold.unwrap_or(0.1)
     }
 
     pub fn observation_sharing_min_interval(&self) -> Duration {
@@ -1242,6 +1245,10 @@ impl Default for AuthorityOverloadConfig {
 
 fn default_authority_overload_config() -> AuthorityOverloadConfig {
     AuthorityOverloadConfig::default()
+}
+
+fn default_traffic_controller_policy_config() -> Option<PolicyConfig> {
+    Some(PolicyConfig::default_dos_protection_policy())
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq)]

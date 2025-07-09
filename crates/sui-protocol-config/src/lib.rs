@@ -19,7 +19,7 @@ use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
 const MIN_PROTOCOL_VERSION: u64 = 1;
-const MAX_PROTOCOL_VERSION: u64 = 84;
+const MAX_PROTOCOL_VERSION: u64 = 85;
 
 // Record history of protocol version allocations here:
 //
@@ -241,7 +241,7 @@ const MAX_PROTOCOL_VERSION: u64 = 84;
 //             Enable execution time estimate mode for congestion control on mainnet.
 //             Enable nitro attestation upgraded parsing and mainnet.
 // Version 84: Limit number of stored execution time observations between epochs.
-//             Remove restrictions on objects created in system transactions.
+// Version 85: Enable party transfer in devnet.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProtocolVersion(u64);
@@ -611,6 +611,10 @@ struct FeatureFlags {
     // Validate identifier inputs separately
     #[serde(skip_serializing_if = "is_false")]
     validate_identifier_inputs: bool,
+
+    // Disallow self identifier
+    #[serde(skip_serializing_if = "is_false")]
+    disallow_self_identifier: bool,
 
     // Enables Mysticeti fastpath.
     #[serde(skip_serializing_if = "is_false")]
@@ -3597,9 +3601,11 @@ impl ProtocolConfig {
                                 Base58::decode("J4QqSAgp7VrQtQpMy5wDX4QGsCSEZu3U5KuDAkbESAge").unwrap().try_into().unwrap(),
                             ],
                         });
-                    } else {
-                        // These features had to be deferred to v84 for mainnet in order to ship the recovery protocol
-                        // upgrade as a patch to 1.48
+                    }
+
+                    // These features had to be deferred to v84 for mainnet in order to ship the recovery protocol
+                    // upgrade as a patch to 1.48
+                    if chain != Chain::Mainnet {
                         cfg.feature_flags.resolve_type_input_ids_to_defining_id = true;
                         cfg.transfer_party_transfer_internal_cost_base = Some(52);
 
@@ -3628,31 +3634,33 @@ impl ProtocolConfig {
                     }
                 }
                 84 => {
-                    cfg.feature_flags.resolve_type_input_ids_to_defining_id = true;
-                    cfg.transfer_party_transfer_internal_cost_base = Some(52);
+                    if chain == Chain::Mainnet {
+                        cfg.feature_flags.resolve_type_input_ids_to_defining_id = true;
+                        cfg.transfer_party_transfer_internal_cost_base = Some(52);
 
-                    // Enable execution time estimate mode for congestion control on mainnet.
-                    cfg.feature_flags.record_additional_state_digest_in_prologue = true;
-                    cfg.consensus_commit_rate_estimation_window_size = Some(10);
-                    cfg.feature_flags.per_object_congestion_control_mode =
-                        PerObjectCongestionControlMode::ExecutionTimeEstimate(
-                            ExecutionTimeEstimateParams {
-                                target_utilization: 30,
-                                allowed_txn_cost_overage_burst_limit_us: 100_000, // 100 ms
-                                randomness_scalar: 20,
-                                max_estimate_us: 1_500_000, // 1.5s
-                                stored_observations_num_included_checkpoints: 10,
-                                stored_observations_limit: u64::MAX,
-                            },
-                        );
+                        // Enable execution time estimate mode for congestion control on mainnet.
+                        cfg.feature_flags.record_additional_state_digest_in_prologue = true;
+                        cfg.consensus_commit_rate_estimation_window_size = Some(10);
+                        cfg.feature_flags.per_object_congestion_control_mode =
+                            PerObjectCongestionControlMode::ExecutionTimeEstimate(
+                                ExecutionTimeEstimateParams {
+                                    target_utilization: 30,
+                                    allowed_txn_cost_overage_burst_limit_us: 100_000, // 100 ms
+                                    randomness_scalar: 20,
+                                    max_estimate_us: 1_500_000, // 1.5s
+                                    stored_observations_num_included_checkpoints: 10,
+                                    stored_observations_limit: u64::MAX,
+                                },
+                            );
 
-                    // Enable the new depth-first block sync logic.
-                    cfg.feature_flags.consensus_batched_block_sync = true;
+                        // Enable the new depth-first block sync logic.
+                        cfg.feature_flags.consensus_batched_block_sync = true;
 
-                    // Enable nitro attestation upgraded parsing logic and enable the
-                    // native function on mainnet.
-                    cfg.feature_flags.enable_nitro_attestation_upgraded_parsing = true;
-                    cfg.feature_flags.enable_nitro_attestation = true;
+                        // Enable nitro attestation upgraded parsing logic and enable the
+                        // native function on mainnet.
+                        cfg.feature_flags.enable_nitro_attestation_upgraded_parsing = true;
+                        cfg.feature_flags.enable_nitro_attestation = true;
+                    }
 
                     // Limit the number of stored execution time observations at end of epoch.
                     cfg.feature_flags.per_object_congestion_control_mode =
@@ -3667,6 +3675,27 @@ impl ProtocolConfig {
                             },
                         );
                     cfg.feature_flags.allow_unbounded_system_objects = true;
+                }
+                85 => {
+                    if chain != Chain::Mainnet && chain != Chain::Testnet {
+                        cfg.feature_flags.enable_party_transfer = true;
+                    }
+
+                    cfg.feature_flags
+                        .record_consensus_determined_version_assignments_in_prologue_v2 = true;
+                    cfg.feature_flags.disallow_self_identifier = true;
+
+                    cfg.feature_flags.per_object_congestion_control_mode =
+                        PerObjectCongestionControlMode::ExecutionTimeEstimate(
+                            ExecutionTimeEstimateParams {
+                                target_utilization: 50,
+                                allowed_txn_cost_overage_burst_limit_us: 500_000, // 500 ms
+                                randomness_scalar: 20,
+                                max_estimate_us: 1_500_000, // 1.5s
+                                stored_observations_num_included_checkpoints: 10,
+                                stored_observations_limit: 20,
+                            },
+                        );
                 }
                 // Use this template when making changes:
                 //
@@ -3717,6 +3746,7 @@ impl ProtocolConfig {
             max_back_edges_per_module,
             max_basic_blocks_in_script: None,
             max_idenfitier_len: self.max_move_identifier_len_as_option(), // Before protocol version 9, there was no limit
+            disallow_self_identifier: self.feature_flags.disallow_self_identifier,
             allow_receiving_object_id: self.allow_receiving_object_id(),
             reject_mutable_random_on_entry_functions: self
                 .reject_mutable_random_on_entry_functions(),

@@ -317,9 +317,9 @@ async fn test_sender_is_not_consensus_v2_owner() {
         Object::with_id_owner_version_for_testing(
             ObjectID::random(),
             start_version.next(),
-            Owner::ConsensusV2 {
+            Owner::ConsensusAddressOwner {
                 start_version,
-                authenticator: Box::new(Authenticator::SingleOwner(sender1)),
+                owner: sender1,
             },
         ),
         |_| {},
