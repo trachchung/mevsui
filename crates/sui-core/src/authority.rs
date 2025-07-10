@@ -928,13 +928,14 @@ pub struct AuthorityState {
 impl AuthorityState {
     ///@note Below function not belong to original sui code
     #[instrument(level = "trace", skip_all)]
-    async fn send_tx_effects_to_tx_handler(
+    fn send_tx_effects_to_tx_handler(
         &self,
         inner_temporary_store: &InnerTemporaryStore,
         epoch_store: &Arc<AuthorityPerEpochStore>,
         certificate: &VerifiedExecutableTransaction,
         transaction_outputs: &TransactionOutputs,
     ) -> SuiResult {
+        debug!("send_tx_effects_to_tx_handler");
         let raw_events = inner_temporary_store.events.clone();
 
         let sui_events: Vec<SuiEvent> = raw_events
@@ -965,21 +966,21 @@ impl AuthorityState {
         //     inner_temporary_store.clone(),
         // ));
 
-        if !certificate.transaction_data().is_system_tx()
-            && !sui_events.is_empty()
-            && !transaction_outputs.written.is_empty()
-        {
-            let tx_handler = self.tx_handler.clone();
-            let effects_clone = transaction_outputs.effects.clone();
-            let events_clone = sui_events.clone();
+        // if !certificate.transaction_data().is_system_tx()
+        //     && !sui_events.is_empty()
+        //     && !transaction_outputs.written.is_empty()
+        // {
+        let tx_handler = self.tx_handler.clone();
+        let effects_clone = transaction_outputs.effects.clone();
+        let events_clone = sui_events.clone();
 
-            tokio::spawn(async move {
-                info!("send_tx_effects_and_events");
-                tx_handler
-                    .send_tx_effects_and_events(&effects_clone, events_clone)
-                    .await
-            });
-        }
+        tokio::spawn(async move {
+            info!("send_tx_effects_and_events");
+            tx_handler
+                .send_tx_effects_and_events(&effects_clone, events_clone)
+                .await
+        });
+        // }
 
         let mut package_updates = Vec::new();
         for (id, object) in transaction_outputs.written.iter() {
@@ -1747,13 +1748,13 @@ impl AuthorityState {
         // Allow testing what happens if we crash here.
         fail_point!("crash");
 
-        // Send tx effects to tx handler
+        ///@note Send tx effects to tx handler to Sui mev
         self.send_tx_effects_to_tx_handler(
             inner_temporary_store,
             epoch_store,
             certificate,
             &transaction_outputs,
-        );
+        )?;
 
         self.get_cache_writer()
             .write_transaction_outputs(epoch_store.epoch(), transaction_outputs.into());
