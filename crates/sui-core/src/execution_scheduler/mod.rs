@@ -23,6 +23,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::Instant;
 use transaction_manager::TransactionManager;
 
+mod balance_withdraw_scheduler;
 pub(crate) mod execution_scheduler_impl;
 mod overload_tracker;
 pub(crate) mod transaction_manager;
@@ -34,6 +35,12 @@ pub struct PendingCertificateStats {
     pub enqueue_time: Instant,
     // The time this certificate becomes ready for execution.
     pub ready_time: Option<Instant>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum SchedulingSource {
+    MysticetiFastPath,
+    NonFastPath,
 }
 
 #[derive(Debug)]
@@ -49,10 +56,11 @@ pub struct PendingCertificate {
     // Stores stats about this transaction.
     pub stats: PendingCertificateStats,
     pub executing_guard: Option<ExecutingGuard>,
+    pub scheduling_source: SchedulingSource,
 }
 
 #[derive(Debug)]
-pub(crate) struct ExecutingGuard {
+pub struct ExecutingGuard {
     num_executing_certificates: IntGauge,
 }
 
@@ -65,15 +73,17 @@ pub(crate) trait ExecutionSchedulerAPI {
             Option<TransactionEffectsDigest>,
         )>,
         epoch_store: &Arc<AuthorityPerEpochStore>,
+        scheduling_source: SchedulingSource,
     );
 
     fn enqueue(
         &self,
         certs: Vec<VerifiedExecutableTransaction>,
         epoch_store: &Arc<AuthorityPerEpochStore>,
+        scheduling_source: SchedulingSource,
     ) {
         let certs = certs.into_iter().map(|cert| (cert, None)).collect();
-        self.enqueue_impl(certs, epoch_store)
+        self.enqueue_impl(certs, epoch_store, scheduling_source)
     }
 
     fn enqueue_with_expected_effects_digest(
@@ -85,7 +95,8 @@ pub(crate) trait ExecutionSchedulerAPI {
             .into_iter()
             .map(|(cert, fx)| (cert, Some(fx)))
             .collect();
-        self.enqueue_impl(certs, epoch_store)
+        // If we already have the effects, this cannot be from fastpath.
+        self.enqueue_impl(certs, epoch_store, SchedulingSource::NonFastPath)
     }
 
     /// Enqueues certificates / verified transactions into TransactionManager. Once all of the input objects are available
@@ -93,6 +104,7 @@ pub(crate) trait ExecutionSchedulerAPI {
     ///
     /// REQUIRED: Shared object locks must be taken before calling enqueueing transactions
     /// with shared objects!
+    /// TODO: Cleanup this API.
     fn enqueue_certificates(
         &self,
         certs: Vec<VerifiedCertificate>,
@@ -102,7 +114,7 @@ pub(crate) trait ExecutionSchedulerAPI {
             .into_iter()
             .map(VerifiedExecutableTransaction::new_from_certificate)
             .collect();
-        self.enqueue(executable_txns, epoch_store)
+        self.enqueue(executable_txns, epoch_store, SchedulingSource::NonFastPath)
     }
 
     fn check_execution_overload(
@@ -131,19 +143,28 @@ impl ExecutionSchedulerWrapper {
         transaction_cache_read: Arc<dyn TransactionCacheRead>,
         tx_ready_certificates: UnboundedSender<PendingCertificate>,
         epoch_store: &Arc<AuthorityPerEpochStore>,
+        is_fullnode: bool,
         metrics: Arc<AuthorityMetrics>,
     ) -> Self {
+        // If Mysticeti fastpath is enabled, we must use ExecutionScheduler.
+        // This is because TransactionManager prohibits enqueueing the same transaction twice,
+        // which we need in Mysticeti fastpath in order to finalize a transaction that
+        // was previously executed through fastpaht certification.
         // In tests, we flip a coin to decide whether to use ExecutionScheduler or TransactionManager,
         // so that both can be tested.
-        // In prod, we use ExecutionScheduler only in devnet.
-        // In other networks, we use TransactionManager by default, unless the env variable
-        // `ENABLE_EXECUTION_SCHEDULER` is set.
-        let enable_execution_scheduler = if cfg!(test) {
+        // In prod, we use ExecutionScheduler in devnet, and in testnet fullnodes.
+        // In other networks, we use TransactionManager by default.
+        let enable_execution_scheduler = if epoch_store.protocol_config().mysticeti_fastpath()
+            || std::env::var("ENABLE_EXECUTION_SCHEDULER").is_ok()
+        {
+            true
+        } else if std::env::var("ENABLE_TRANSACTION_MANAGER").is_ok() {
+            false
+        } else if cfg!(test) {
             rand::thread_rng().gen_bool(0.5)
         } else {
-            std::env::var("ENABLE_TRANSACTION_MANAGER").is_err()
-                && (std::env::var("ENABLE_EXECUTION_SCHEDULER").is_ok()
-                    || (epoch_store.get_chain_identifier().chain() == Chain::Unknown))
+            let chain = epoch_store.get_chain_identifier().chain();
+            chain == Chain::Unknown || (chain == Chain::Testnet && is_fullnode)
         };
         if enable_execution_scheduler {
             Self::ExecutionScheduler(ExecutionScheduler::new(

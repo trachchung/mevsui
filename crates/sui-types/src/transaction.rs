@@ -330,6 +330,9 @@ pub enum TransactionKind {
 
     ConsensusCommitPrologueV3(ConsensusCommitPrologueV3),
     ConsensusCommitPrologueV4(ConsensusCommitPrologueV4),
+
+    /// A system transaction that is expressed as a PTB
+    ProgrammableSystemTransaction(ProgrammableTransaction),
     // .. more transaction types go here
 }
 
@@ -344,6 +347,7 @@ pub enum EndOfEpochTransactionKind {
     BridgeStateCreate(ChainIdentifier),
     BridgeCommitteeInit(SequenceNumber),
     StoreExecutionTimeObservations(StoredExecutionTimeObservations),
+    AccumulatorRootCreate,
 }
 
 impl EndOfEpochTransactionKind {
@@ -385,6 +389,10 @@ impl EndOfEpochTransactionKind {
 
     pub fn new_randomness_state_create() -> Self {
         Self::RandomnessStateCreate
+    }
+
+    pub fn new_accumulator_root_create() -> Self {
+        Self::AccumulatorRootCreate
     }
 
     pub fn new_deny_list_state_create() -> Self {
@@ -444,6 +452,7 @@ impl EndOfEpochTransactionKind {
                     mutable: true,
                 }]
             }
+            Self::AccumulatorRootCreate => vec![],
         }
     }
 
@@ -478,6 +487,7 @@ impl EndOfEpochTransactionKind {
             Self::StoreExecutionTimeObservations(_) => {
                 Either::Left(vec![SharedInputObject::SUI_SYSTEM_OBJ].into_iter())
             }
+            Self::AccumulatorRootCreate => Either::Right(iter::empty()),
         }
     }
 
@@ -531,6 +541,13 @@ impl EndOfEpochTransactionKind {
                 ) {
                     return Err(UserInputError::Unsupported(
                         "execution time estimation not enabled".to_string(),
+                    ));
+                }
+            }
+            Self::AccumulatorRootCreate => {
+                if !config.enable_accumulators() {
+                    return Err(UserInputError::Unsupported(
+                        "accumulators not enabled".to_string(),
                     ));
                 }
             }
@@ -1261,7 +1278,8 @@ impl TransactionKind {
             | TransactionKind::ConsensusCommitPrologueV4(_)
             | TransactionKind::AuthenticatorStateUpdate(_)
             | TransactionKind::RandomnessStateUpdate(_)
-            | TransactionKind::EndOfEpochTransaction(_) => true,
+            | TransactionKind::EndOfEpochTransaction(_)
+            | TransactionKind::ProgrammableSystemTransaction(_) => true,
             TransactionKind::ProgrammableTransaction(_) => false,
         }
     }
@@ -1333,7 +1351,7 @@ impl TransactionKind {
             Self::EndOfEpochTransaction(txns) => Either::Left(Either::Right(
                 txns.iter().flat_map(|txn| txn.shared_input_objects()),
             )),
-            Self::ProgrammableTransaction(pt) => {
+            Self::ProgrammableTransaction(pt) | Self::ProgrammableSystemTransaction(pt) => {
                 Either::Right(Either::Left(pt.shared_input_objects()))
             }
             Self::Genesis(_) => Either::Right(Either::Right(iter::empty())),
@@ -1357,7 +1375,8 @@ impl TransactionKind {
             | TransactionKind::ConsensusCommitPrologueV4(_)
             | TransactionKind::AuthenticatorStateUpdate(_)
             | TransactionKind::RandomnessStateUpdate(_)
-            | TransactionKind::EndOfEpochTransaction(_) => vec![],
+            | TransactionKind::EndOfEpochTransaction(_)
+            | TransactionKind::ProgrammableSystemTransaction(_) => vec![],
             TransactionKind::ProgrammableTransaction(pt) => pt.receiving_objects(),
         }
     }
@@ -1416,7 +1435,9 @@ impl TransactionKind {
                 }
                 after_dedup
             }
-            Self::ProgrammableTransaction(p) => return p.input_objects(),
+            Self::ProgrammableTransaction(p) | Self::ProgrammableSystemTransaction(p) => {
+                return p.input_objects();
+            }
         };
         // Ensure that there are no duplicate inputs. This cannot be removed because:
         // In [`AuthorityState::check_locks`], we check that there are no duplicate mutable
@@ -1487,6 +1508,13 @@ impl TransactionKind {
                     ));
                 }
             }
+            TransactionKind::ProgrammableSystemTransaction(_) => {
+                if !config.enable_accumulators() {
+                    return Err(UserInputError::Unsupported(
+                        "accumulators not enabled".to_string(),
+                    ));
+                }
+            }
         };
         Ok(())
     }
@@ -1523,6 +1551,7 @@ impl TransactionKind {
             Self::ConsensusCommitPrologueV3(_) => "ConsensusCommitPrologueV3",
             Self::ConsensusCommitPrologueV4(_) => "ConsensusCommitPrologueV4",
             Self::ProgrammableTransaction(_) => "ProgrammableTransaction",
+            Self::ProgrammableSystemTransaction(_) => "ProgrammableSystemTransaction",
             Self::AuthenticatorStateUpdate(_) => "AuthenticatorStateUpdate",
             Self::RandomnessStateUpdate(_) => "RandomnessStateUpdate",
             Self::EndOfEpochTransaction(_) => "EndOfEpochTransaction",
@@ -1581,6 +1610,10 @@ impl Display for TransactionKind {
             }
             Self::ProgrammableTransaction(p) => {
                 writeln!(writer, "Transaction Kind : Programmable")?;
+                write!(writer, "{p}")?;
+            }
+            Self::ProgrammableSystemTransaction(p) => {
+                writeln!(writer, "Transaction Kind : Programmable System")?;
                 write!(writer, "{p}")?;
             }
             Self::AuthenticatorStateUpdate(_) => {
@@ -2250,6 +2283,7 @@ impl TransactionDataAPI for TransactionDataV1 {
             | TransactionKind::ConsensusCommitPrologueV4(_) => true,
 
             TransactionKind::ProgrammableTransaction(_)
+            | TransactionKind::ProgrammableSystemTransaction(_)
             | TransactionKind::ChangeEpoch(_)
             | TransactionKind::Genesis(_)
             | TransactionKind::AuthenticatorStateUpdate(_)

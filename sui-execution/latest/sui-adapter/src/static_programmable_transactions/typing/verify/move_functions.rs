@@ -3,7 +3,6 @@
 
 use crate::execution_mode::ExecutionMode;
 use crate::programmable_transactions::execution::check_private_generics;
-
 use crate::static_programmable_transactions::typing::ast::InputArg;
 use crate::static_programmable_transactions::{env::Env, loading::ast::Type, typing::ast as T};
 use move_binary_format::{CompiledModule, file_format::Visibility};
@@ -135,7 +134,7 @@ fn command<Mode: ExecutionMode>(
             let coin_is_dirty = argument(env, context, coin);
             debug_assert!(!amounts_are_dirty);
             let is_dirty = amounts_are_dirty || coin_is_dirty;
-            debug_assert!(result.len() == amounts.len());
+            debug_assert_eq!(result.len(), amounts.len());
             context
                 .results
                 .push(vec![IsDirty::Fixed { is_dirty }; result.len()]);
@@ -151,17 +150,23 @@ fn command<Mode: ExecutionMode>(
         }
         T::Command_::MakeMoveVec(_, args) => {
             let is_dirty = arguments(env, context, args);
-            debug_assert!(result.len() == 1);
+            debug_assert_eq!(result.len(), 1);
             context.results.push(vec![IsDirty::Fixed { is_dirty }]);
         }
-        T::Command_::Publish(_, _) => {
-            debug_assert!(result.is_empty());
-            context.results.push(vec![]);
+        T::Command_::Publish(_, _, _) => {
+            debug_assert_eq!(Mode::packages_are_predefined(), result.is_empty());
+            debug_assert_eq!(!Mode::packages_are_predefined(), result.len() == 1);
+            let result = result
+                .iter()
+                .map(|_| IsDirty::Fixed { is_dirty: false })
+                .collect::<Vec<_>>();
+            context.results.push(result);
         }
-        T::Command_::Upgrade(_, _, _, ticket) => {
+        T::Command_::Upgrade(_, _, _, ticket, _) => {
+            debug_assert_eq!(result.len(), 1);
+            let result = vec![IsDirty::Fixed { is_dirty: false }];
             argument(env, context, ticket);
-            debug_assert!(result.is_empty());
-            context.results.push(vec![]);
+            context.results.push(result);
         }
     }
     Ok(())
@@ -240,7 +245,7 @@ fn check_visibility<Mode: ExecutionMode>(
     env: &Env,
     function: &T::LoadedFunction,
 ) -> Result<(Visibility, /* is_entry */ bool), ExecutionError> {
-    let module = env.module_definition(&function.runtime_id)?;
+    let module = env.module_definition(&function.runtime_id, &function.linkage)?;
     let module: &CompiledModule = module.as_ref();
     let Some((_index, fdef)) = module.find_function_def_by_name(function.name.as_str()) else {
         invariant_violation!(

@@ -59,7 +59,7 @@ use sui_types::messages_checkpoint::{
 };
 use sui_types::messages_consensus::{
     check_total_jwk_size, AuthorityCapabilitiesV1, AuthorityCapabilitiesV2, AuthorityIndex,
-    ConsensusTransaction, ConsensusTransactionKey, ConsensusTransactionKind,
+    ConsensusPosition, ConsensusTransaction, ConsensusTransactionKey, ConsensusTransactionKind,
     ExecutionTimeObservation, TimestampMs, VersionedDkgConfirmation,
 };
 use sui_types::signature::GenericSignature;
@@ -120,7 +120,6 @@ use crate::module_cache_metrics::ResolverMetrics;
 use crate::post_consensus_tx_reorder::PostConsensusTxReorder;
 use crate::signature_verifier::*;
 use crate::stake_aggregator::{GenericMultiStakeAggregator, StakeAggregator};
-use crate::wait_for_effects_request::ConsensusTxPosition;
 
 /// The key where the latest consensus index is stored in the database.
 // TODO: Make a single table (e.g., called `variables`) storing all our lonely variables in one place.
@@ -1211,6 +1210,16 @@ impl AuthorityPerEpochStore {
             error!("BUG: `set_randomness_manager` called more than once; this should never happen");
         }
         result
+    }
+
+    pub fn accumulator_root_exists(&self) -> bool {
+        self.epoch_start_configuration
+            .accumulator_root_obj_initial_shared_version()
+            .is_some()
+    }
+
+    pub fn accumulators_enabled(&self) -> bool {
+        self.protocol_config().enable_accumulators() && self.accumulator_root_exists()
     }
 
     pub fn coin_deny_list_state_exists(&self) -> bool {
@@ -3045,10 +3054,11 @@ impl AuthorityPerEpochStore {
         let mut end_of_publish_transactions = Vec::with_capacity(verified_transactions.len());
         let mut execution_time_observations = Vec::with_capacity(verified_transactions.len());
         for mut tx in verified_transactions {
+            let key = tx.0.key();
             if tx.0.is_end_of_publish() {
                 end_of_publish_transactions.push(tx);
             } else if let Some(observation) = tx.0.try_take_execution_time_observation() {
-                execution_time_observations.push(observation);
+                execution_time_observations.push((key, observation));
             } else if tx.0.is_system() {
                 system_transactions.push(tx);
             } else if tx
@@ -3202,11 +3212,14 @@ impl AuthorityPerEpochStore {
             .execution_time_estimator
             .try_lock()
             .expect("should only ever be called from the commit handler thread");
-        for ExecutionTimeObservation {
-            authority,
-            generation,
-            estimates,
-        } in execution_time_observations
+        for (
+            key,
+            ExecutionTimeObservation {
+                authority,
+                generation,
+                estimates,
+            },
+        ) in execution_time_observations
         {
             let Some(estimator) = execution_time_estimator.as_mut() else {
                 error!("dropping ExecutionTimeObservation from possibly-Byzantine authority {authority:?} sent when ExecutionTimeEstimate mode is not enabled");
@@ -3215,6 +3228,9 @@ impl AuthorityPerEpochStore {
             let authority_index = self.committee.authority_index(&authority).unwrap();
             estimator.process_observations_from_consensus(authority_index, generation, &estimates);
             output.insert_execution_time_observation(authority_index, generation, estimates);
+            if self.protocol_config().record_time_estimate_processed() {
+                output.record_consensus_message_processed(key);
+            }
         }
 
         // We track transaction execution cost separately for regular transactions and transactions using randomness, since
@@ -4675,7 +4691,7 @@ impl AuthorityPerEpochStore {
 
     pub(crate) fn set_consensus_tx_status(
         &self,
-        position: ConsensusTxPosition,
+        position: ConsensusPosition,
         status: ConsensusTxStatus,
     ) {
         if let Some(cache) = self.consensus_tx_status_cache.as_ref() {

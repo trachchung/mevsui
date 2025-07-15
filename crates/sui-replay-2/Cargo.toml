@@ -9,8 +9,8 @@ edition = "2021"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-base64ct = "1.6.0"
 bcs.workspace = true
+bin-version.workspace = true
 clap.workspace = true
 chrono.workspace = true
 cynic.workspace = true
@@ -36,8 +36,11 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 
-# [features]
-# tracing = [
-#     "sui-types/tracing",
-#     "sui-execution/tracing",
-# ]
+[build-dependencies]
+cynic-codegen.workspace = true
+
+[features]
+tracing = [
+    "sui-types/tracing",
+    "sui-execution/tracing",
+]

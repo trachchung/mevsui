@@ -8,7 +8,7 @@ use super::*;
 use crate::authority::{authority_tests::init_state_with_objects, AuthorityState};
 use crate::checkpoints::CheckpointServiceNoop;
 use crate::consensus_handler::SequencedConsensusTransaction;
-use crate::execution_scheduler::ExecutionSchedulerAPI;
+use crate::execution_scheduler::{ExecutionSchedulerAPI, SchedulingSource};
 use crate::mock_consensus::with_block_status;
 use consensus_core::{BlockRef, BlockStatus};
 use fastcrypto::traits::KeyPair;
@@ -202,7 +202,7 @@ pub fn make_consensus_adapter_for_test(
             &self,
             transactions: &[ConsensusTransaction],
             epoch_store: &Arc<AuthorityPerEpochStore>,
-        ) -> SuiResult<BlockStatusReceiver> {
+        ) -> SuiResult<(Vec<ConsensusPosition>, BlockStatusReceiver)> {
             let sequenced_transactions: Vec<SequencedConsensusTransaction> = transactions
                 .iter()
                 .map(|txn| SequencedConsensusTransaction::new_test(txn.clone()))
@@ -212,6 +212,7 @@ pub fn make_consensus_adapter_for_test(
             let mut transactions = Vec::new();
             let mut executed_via_checkpoint = 0;
 
+            let num_transactions = sequenced_transactions.len();
             for tx in sequenced_transactions {
                 if let Some(transaction_digest) = tx.transaction.executable_transaction_digest() {
                     if self.process_via_checkpoint.contains(&transaction_digest) {
@@ -256,16 +257,30 @@ pub fn make_consensus_adapter_for_test(
             );
 
             if self.execute {
-                self.state
-                    .execution_scheduler()
-                    .enqueue(transactions, epoch_store);
+                self.state.execution_scheduler().enqueue(
+                    transactions,
+                    epoch_store,
+                    SchedulingSource::NonFastPath,
+                );
             }
 
             assert!(
                 !self.mock_block_status_receivers.lock().is_empty(),
                 "No mock submit responses left"
             );
-            Ok(self.mock_block_status_receivers.lock().remove(0))
+
+            let mut consensus_positions = Vec::new();
+            for index in 0..num_transactions {
+                consensus_positions.push(ConsensusPosition {
+                    index: index as u16,
+                    block: BlockRef::MIN,
+                });
+            }
+
+            Ok((
+                consensus_positions,
+                self.mock_block_status_receivers.lock().remove(0),
+            ))
         }
     }
     let epoch_store = state.epoch_store_for_testing();
@@ -327,6 +342,7 @@ async fn submit_transaction_to_consensus_adapter() {
             transaction.clone(),
             Some(&epoch_store.get_reconfig_state_read_lock_guard()),
             &epoch_store,
+            None,
         )
         .unwrap();
     waiter.await.unwrap();
@@ -372,6 +388,7 @@ async fn submit_multiple_transactions_to_consensus_adapter() {
             &transactions,
             Some(&epoch_store.get_reconfig_state_read_lock_guard()),
             &epoch_store,
+            None,
         )
         .unwrap();
     waiter.await.unwrap();
@@ -457,6 +474,7 @@ async fn submit_checkpoint_signature_to_consensus_adapter() {
                 &transactions,
                 Some(&epoch_store.get_reconfig_state_read_lock_guard()),
                 &epoch_store,
+                None,
             )
             .unwrap();
         waiter.await.unwrap();

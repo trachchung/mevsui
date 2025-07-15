@@ -7,6 +7,7 @@ pub use checked::*;
 mod checked {
     use crate::{
         adapter::substitute_package_id,
+        data_store::{PackageStore, legacy::sui_data_store::SuiDataStore},
         execution_mode::ExecutionMode,
         execution_value::{
             CommandKind, ExecutionState, ObjectContents, ObjectValue, RawValueType, Value,
@@ -15,12 +16,12 @@ mod checked {
         gas_charger::GasCharger,
         programmable_transactions::{
             context::*,
-            data_store::SuiDataStore,
             trace_utils::{
                 trace_move_call_end, trace_move_call_start, trace_ptb_summary, trace_split_coins,
                 trace_transfer,
             },
         },
+        static_programmable_transactions,
         type_resolver::TypeTagResolver,
     };
     use move_binary_format::file_format::AbilitySet;
@@ -32,11 +33,10 @@ mod checked {
         file_format_common::VERSION_6,
         normalized,
     };
-    use move_core_types::language_storage::StructTag;
     use move_core_types::{
         account_address::AccountAddress,
         identifier::{IdentStr, Identifier},
-        language_storage::{ModuleId, TypeTag},
+        language_storage::{ModuleId, StructTag, TypeTag},
         u256::U256,
     };
     use move_trace_format::format::MoveTraceBuilder;
@@ -67,14 +67,14 @@ mod checked {
         error::{ExecutionError, ExecutionErrorKind, command_argument_error},
         execution::{ExecutionTiming, ResultWithTimings},
         execution_config_utils::to_binary_config,
-        execution_status::{CommandArgumentError, PackageUpgradeError},
+        execution_status::{CommandArgumentError, PackageUpgradeError, TypeArgumentError},
         id::RESOLVED_SUI_ID,
         metrics::LimitsMetrics,
         move_package::{
             MovePackage, UpgradeCap, UpgradePolicy, UpgradeReceipt, UpgradeTicket,
             normalize_deserialized_modules,
         },
-        storage::{PackageObject, get_package_objects},
+        storage::{BackingPackageStore, PackageObject, get_package_objects},
         transaction::{Command, ProgrammableMoveCall, ProgrammableTransaction},
         transfer::RESOLVED_RECEIVING_STRUCT,
         type_input::{StructInput, TypeInput},
@@ -90,11 +90,26 @@ mod checked {
         metrics: Arc<LimitsMetrics>,
         vm: &MoveVM,
         state_view: &mut dyn ExecutionState,
+        package_store: &dyn BackingPackageStore,
         tx_context: Rc<RefCell<TxContext>>,
         gas_charger: &mut GasCharger,
         pt: ProgrammableTransaction,
         trace_builder_opt: &mut Option<MoveTraceBuilder>,
     ) -> ResultWithTimings<Mode::ExecutionResults, ExecutionError> {
+        if protocol_config.enable_ptb_execution_v2() {
+            return static_programmable_transactions::execute::<Mode>(
+                protocol_config,
+                metrics,
+                vm,
+                state_view,
+                package_store,
+                tx_context,
+                gas_charger,
+                pt,
+                trace_builder_opt,
+            );
+        }
+
         let mut timings = vec![];
         let result = execute_inner::<Mode>(
             &mut timings,
@@ -193,7 +208,7 @@ mod checked {
                     );
                 };
 
-                let tag = to_type_tag(context, tag)?;
+                let tag = to_type_tag(context, tag, 0)?;
 
                 let elem_ty = context.load_type(&tag).map_err(|e| {
                     if context.protocol_config.convert_type_argument_error() {
@@ -224,7 +239,7 @@ mod checked {
                 let mut arg_iter = args.into_iter().enumerate();
                 let (mut used_in_non_entry_move_call, elem_ty) = match tag_opt {
                     Some(tag) => {
-                        let tag = to_type_tag(context, tag)?;
+                        let tag = to_type_tag(context, tag, 0)?;
                         let elem_ty = context.load_type(&tag).map_err(|e| {
                             if context.protocol_config.convert_type_argument_error() {
                                 context.convert_type_argument_error(0, e)
@@ -383,7 +398,7 @@ mod checked {
                 // Convert type arguments to `Type`s
                 let mut loaded_type_arguments = Vec::with_capacity(type_arguments.len());
                 for (ix, type_arg) in type_arguments.into_iter().enumerate() {
-                    let type_arg = to_type_tag(context, type_arg)?;
+                    let type_arg = to_type_tag(context, type_arg, ix)?;
                     let ty = context
                         .load_type(&type_arg)
                         .map_err(|e| context.convert_type_argument_error(ix, e))?;
@@ -599,7 +614,7 @@ mod checked {
 
         // For newly published packages, runtime ID matches storage ID.
         let storage_id = runtime_id;
-        let dependencies = fetch_packages(context, &dep_ids)?;
+        let dependencies = fetch_packages(&context.state_view, &dep_ids)?;
         let package =
             context.new_package(&modules, dependencies.iter().map(|p| p.move_package()))?;
 
@@ -702,7 +717,7 @@ mod checked {
         }
 
         // Check that this package ID points to a package and get the package we're upgrading.
-        let current_package = fetch_package(context, &upgrade_ticket.package.bytes)?;
+        let current_package = fetch_package(&context.state_view, &upgrade_ticket.package.bytes)?;
 
         let mut modules = deserialize_modules::<Mode>(context, &module_bytes)?;
         let runtime_id = current_package.move_package().original_package_id();
@@ -711,7 +726,7 @@ mod checked {
         // Upgraded packages share their predecessor's runtime ID but get a new storage ID.
         let storage_id = context.tx_context.borrow_mut().fresh_id();
 
-        let dependencies = fetch_packages(context, &dep_ids)?;
+        let dependencies = fetch_packages(&context.state_view, &dep_ids)?;
         let package = context.upgrade_package(
             storage_id,
             current_package.move_package(),
@@ -725,7 +740,7 @@ mod checked {
         res?;
 
         check_compatibility(
-            context,
+            context.protocol_config,
             current_package.move_package(),
             &modules,
             upgrade_ticket.policy,
@@ -742,8 +757,8 @@ mod checked {
         )])
     }
 
-    fn check_compatibility(
-        context: &ExecutionContext,
+    pub fn check_compatibility(
+        protocol_config: &ProtocolConfig,
         existing_package: &MovePackage,
         upgrading_modules: &[CompiledModule],
         policy: u8,
@@ -758,7 +773,7 @@ mod checked {
         };
 
         let pool = &mut normalized::RcPool::new();
-        let binary_config = to_binary_config(context.protocol_config);
+        let binary_config = to_binary_config(protocol_config);
         let Ok(current_normalized) =
             existing_package.normalize(pool, &binary_config, /* include code */ true)
         else {
@@ -767,9 +782,7 @@ mod checked {
 
         let existing_modules_len = current_normalized.len();
         let upgrading_modules_len = upgrading_modules.len();
-        let disallow_new_modules = context
-            .protocol_config
-            .disallow_new_modules_in_deps_only_packages()
+        let disallow_new_modules = protocol_config.disallow_new_modules_in_deps_only_packages()
             && policy as u8 == UpgradePolicy::DEP_ONLY;
 
         if disallow_new_modules && existing_modules_len != upgrading_modules_len {
@@ -832,11 +845,11 @@ mod checked {
         })
     }
 
-    fn fetch_package(
-        context: &ExecutionContext<'_, '_, '_>,
+    pub fn fetch_package(
+        state_view: &impl BackingPackageStore,
         package_id: &ObjectID,
     ) -> Result<PackageObject, ExecutionError> {
-        let mut fetched_packages = fetch_packages(context, vec![package_id])?;
+        let mut fetched_packages = fetch_packages(state_view, vec![package_id])?;
         assert_invariant!(
             fetched_packages.len() == 1,
             "Number of fetched packages must match the number of package object IDs if successful."
@@ -849,12 +862,12 @@ mod checked {
         }
     }
 
-    fn fetch_packages<'ctx, 'vm, 'state, 'a>(
-        context: &'ctx ExecutionContext<'vm, 'state, 'a>,
+    pub fn fetch_packages<'ctx, 'state>(
+        state_view: &'state impl BackingPackageStore,
         package_ids: impl IntoIterator<Item = &'ctx ObjectID>,
     ) -> Result<Vec<PackageObject>, ExecutionError> {
         let package_ids: BTreeSet<_> = package_ids.into_iter().collect();
-        match get_package_objects(&context.state_view, package_ids) {
+        match get_package_objects(state_view, package_ids) {
             Err(e) => Err(ExecutionError::new_with_source(
                 ExecutionErrorKind::PublishUpgradeMissingDependency,
                 e,
@@ -1181,6 +1194,8 @@ mod checked {
         let LoadedFunctionInstantiation {
             parameters,
             return_,
+            instruction_length,
+            definition_index,
         } = signature;
         let parameters = parameters
             .into_iter()
@@ -1195,6 +1210,8 @@ mod checked {
         Ok(LoadedFunctionInstantiation {
             parameters,
             return_,
+            instruction_length,
+            definition_index,
         })
     }
 
@@ -1531,15 +1548,25 @@ mod checked {
     fn to_type_tag(
         context: &mut ExecutionContext<'_, '_, '_>,
         type_input: TypeInput,
+        idx: usize,
     ) -> Result<TypeTag, ExecutionError> {
-        let type_tag_no_def_ids = to_type_tag_(context, type_input)?;
+        let type_tag_no_def_ids = to_type_tag_(context, type_input, idx)?;
         if context
             .protocol_config
             .resolve_type_input_ids_to_defining_id()
         {
+            let ix = if context
+                .protocol_config
+                .better_adapter_type_resolution_errors()
+            {
+                idx
+            } else {
+                0
+            };
+
             let ty = context
                 .load_type(&type_tag_no_def_ids)
-                .map_err(|e| context.convert_type_argument_error(0, e))?;
+                .map_err(|e| context.convert_type_argument_error(ix, e))?;
             context.get_type_tag(&ty)
         } else {
             Ok(type_tag_no_def_ids)
@@ -1549,11 +1576,56 @@ mod checked {
     fn to_type_tag_(
         context: &mut ExecutionContext<'_, '_, '_>,
         type_input: TypeInput,
+        idx: usize,
     ) -> Result<TypeTag, ExecutionError> {
         use TypeInput as I;
         use TypeTag as T;
+        Ok(match type_input {
+            I::Bool => T::Bool,
+            I::U8 => T::U8,
+            I::U16 => T::U16,
+            I::U32 => T::U32,
+            I::U64 => T::U64,
+            I::U128 => T::U128,
+            I::U256 => T::U256,
+            I::Address => T::Address,
+            I::Signer => T::Signer,
+            I::Vector(t) => T::Vector(Box::new(to_type_tag_(context, *t, idx)?)),
+            I::Struct(s) => {
+                let StructInput {
+                    address,
+                    module,
+                    name,
+                    type_params,
+                } = *s;
+                let type_params = type_params
+                    .into_iter()
+                    .map(|t| to_type_tag_(context, t, idx))
+                    .collect::<Result<_, _>>()?;
+                let (module, name) = resolve_datatype_names(context, address, module, name, idx)?;
+                T::Struct(Box::new(StructTag {
+                    address,
+                    module,
+                    name,
+                    type_params,
+                }))
+            }
+        })
+    }
+
+    fn resolve_datatype_names(
+        context: &ExecutionContext<'_, '_, '_>,
+        addr: AccountAddress,
+        module: String,
+        name: String,
+        idx: usize,
+    ) -> Result<(Identifier, Identifier), ExecutionError> {
         let validate_identifiers = context.protocol_config.validate_identifier_inputs();
-        let to_ident = |s: String| {
+        let better_resolution_errors = context
+            .protocol_config
+            .better_adapter_type_resolution_errors();
+
+        let to_ident = |s| {
             if validate_identifiers {
                 Identifier::new(s).map_err(|e| {
                     ExecutionError::new_with_source(
@@ -1568,36 +1640,26 @@ mod checked {
             }
         };
 
-        Ok(match type_input {
-            I::Bool => T::Bool,
-            I::U8 => T::U8,
-            I::U16 => T::U16,
-            I::U32 => T::U32,
-            I::U64 => T::U64,
-            I::U128 => T::U128,
-            I::U256 => T::U256,
-            I::Address => T::Address,
-            I::Signer => T::Signer,
-            I::Vector(t) => T::Vector(Box::new(to_type_tag_(context, *t)?)),
-            I::Struct(s) => {
-                let StructInput {
-                    address,
-                    module,
-                    name,
-                    type_params,
-                } = *s;
-                let type_params = type_params
-                    .into_iter()
-                    .map(|t| to_type_tag_(context, t))
-                    .collect::<Result<_, _>>()?;
-                T::Struct(Box::new(StructTag {
-                    address,
-                    module: to_ident(module)?,
-                    name: to_ident(name)?,
-                    type_params,
-                }))
-            }
-        })
+        let module_ident = to_ident(module.clone())?;
+        let name_ident = to_ident(name.clone())?;
+
+        if better_resolution_errors
+            && context
+                .linkage_view
+                .get_package(&addr.into())
+                .ok()
+                .flatten()
+                .is_none_or(|pkg| !pkg.type_origin_map().contains_key(&(module, name)))
+        {
+            return Err(ExecutionError::from_kind(
+                ExecutionErrorKind::TypeArgumentError {
+                    argument_idx: idx as u16,
+                    kind: TypeArgumentError::TypeNotFound,
+                },
+            ));
+        }
+
+        Ok((module_ident, name_ident))
     }
 
     fn get_datatype_ident(s: &CachedDatatype) -> (&AccountAddress, &IdentStr, &IdentStr) {

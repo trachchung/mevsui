@@ -19,7 +19,7 @@ use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
 const MIN_PROTOCOL_VERSION: u64 = 1;
-const MAX_PROTOCOL_VERSION: u64 = 85;
+const MAX_PROTOCOL_VERSION: u64 = 87;
 
 // Record history of protocol version allocations here:
 //
@@ -242,6 +242,10 @@ const MAX_PROTOCOL_VERSION: u64 = 85;
 //             Enable nitro attestation upgraded parsing and mainnet.
 // Version 84: Limit number of stored execution time observations between epochs.
 // Version 85: Enable party transfer in devnet.
+// Version 86: Use type tags in the object runtime and adapter instead of `Type`s.
+//             Make variant count limit explicit in protocol config.
+//             Enable party transfer in testnet.
+// Version 87: Enable better type resolution errors in the adapter.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProtocolVersion(u64);
@@ -705,6 +709,26 @@ struct FeatureFlags {
     // Allow objects created or mutated in system transactions to exceed the max object size limit.
     #[serde(skip_serializing_if = "is_false")]
     allow_unbounded_system_objects: bool,
+
+    // Signifies the cut-over of using type tags instead of `Type`s in the object runtime.
+    #[serde(skip_serializing_if = "is_false")]
+    type_tags_in_object_runtime: bool,
+
+    // Enable accumulators
+    #[serde(skip_serializing_if = "is_false")]
+    enable_accumulators: bool,
+
+    // Enable statically type checked ptb execution
+    #[serde(skip_serializing_if = "is_false")]
+    enable_ptb_execution_v2: bool,
+
+    // Provide better type resolution errors in the adapter.
+    #[serde(skip_serializing_if = "is_false")]
+    better_adapter_type_resolution_errors: bool,
+
+    // If true, record the time estimate processed in the consensus commit prologue.
+    #[serde(skip_serializing_if = "is_false")]
+    record_time_estimate_processed: bool,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -713,6 +737,10 @@ fn is_false(b: &bool) -> bool {
 
 fn is_empty(b: &BTreeSet<String>) -> bool {
     b.is_empty()
+}
+
+fn is_zero(val: &u64) -> bool {
+    *val == 0
 }
 
 /// Ordering mechanism for transactions in one Narwhal consensus output.
@@ -753,6 +781,11 @@ pub struct ExecutionTimeEstimateParams {
 
     // Absolute limit on the number of saved observations at end of epoch.
     pub stored_observations_limit: u64,
+
+    // Requires observations from at least this amount of stake in order to use
+    // observation-based execution time estimates instead of the default.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub stake_weighted_median_threshold: u64,
 }
 
 // The config for per object congestion control in consensus handler.
@@ -1783,6 +1816,10 @@ impl ProtocolConfig {
         self.feature_flags.enable_coin_deny_list
     }
 
+    pub fn enable_accumulators(&self) -> bool {
+        self.feature_flags.enable_accumulators
+    }
+
     pub fn enable_coin_deny_list_v2(&self) -> bool {
         self.feature_flags.enable_coin_deny_list_v2
     }
@@ -2033,6 +2070,22 @@ impl ProtocolConfig {
                 && addr.aliased == signer
                 && addr.allowed_tx_digests.contains(tx_digest)
         })
+    }
+
+    pub fn type_tags_in_object_runtime(&self) -> bool {
+        self.feature_flags.type_tags_in_object_runtime
+    }
+
+    pub fn enable_ptb_execution_v2(&self) -> bool {
+        self.feature_flags.enable_ptb_execution_v2
+    }
+
+    pub fn better_adapter_type_resolution_errors(&self) -> bool {
+        self.feature_flags.better_adapter_type_resolution_errors
+    }
+
+    pub fn record_time_estimate_processed(&self) -> bool {
+        self.feature_flags.record_time_estimate_processed
     }
 }
 
@@ -3542,6 +3595,7 @@ impl ProtocolConfig {
                                     max_estimate_us: 1_500_000, // 1.5s
                                     stored_observations_num_included_checkpoints: 10,
                                     stored_observations_limit: u64::MAX,
+                                    stake_weighted_median_threshold: 0,
                                 },
                             );
                     }
@@ -3621,6 +3675,7 @@ impl ProtocolConfig {
                                     max_estimate_us: 1_500_000, // 1.5s
                                     stored_observations_num_included_checkpoints: 10,
                                     stored_observations_limit: u64::MAX,
+                                    stake_weighted_median_threshold: 0,
                                 },
                             );
 
@@ -3650,6 +3705,7 @@ impl ProtocolConfig {
                                     max_estimate_us: 1_500_000, // 1.5s
                                     stored_observations_num_included_checkpoints: 10,
                                     stored_observations_limit: u64::MAX,
+                                    stake_weighted_median_threshold: 0,
                                 },
                             );
 
@@ -3672,6 +3728,7 @@ impl ProtocolConfig {
                                 max_estimate_us: 1_500_000, // 1.5s
                                 stored_observations_num_included_checkpoints: 10,
                                 stored_observations_limit: 20,
+                                stake_weighted_median_threshold: 0,
                             },
                         );
                     cfg.feature_flags.allow_unbounded_system_objects = true;
@@ -3684,7 +3741,6 @@ impl ProtocolConfig {
                     cfg.feature_flags
                         .record_consensus_determined_version_assignments_in_prologue_v2 = true;
                     cfg.feature_flags.disallow_self_identifier = true;
-
                     cfg.feature_flags.per_object_congestion_control_mode =
                         PerObjectCongestionControlMode::ExecutionTimeEstimate(
                             ExecutionTimeEstimateParams {
@@ -3694,8 +3750,37 @@ impl ProtocolConfig {
                                 max_estimate_us: 1_500_000, // 1.5s
                                 stored_observations_num_included_checkpoints: 10,
                                 stored_observations_limit: 20,
+                                stake_weighted_median_threshold: 0,
                             },
                         );
+                }
+                86 => {
+                    cfg.feature_flags.type_tags_in_object_runtime = true;
+                    cfg.max_move_enum_variants = Some(move_core_types::VARIANT_COUNT_MAX);
+
+                    // Set a stake_weighted_median_threshold for congestion control.
+                    cfg.feature_flags.per_object_congestion_control_mode =
+                        PerObjectCongestionControlMode::ExecutionTimeEstimate(
+                            ExecutionTimeEstimateParams {
+                                target_utilization: 50,
+                                allowed_txn_cost_overage_burst_limit_us: 500_000, // 500 ms
+                                randomness_scalar: 20,
+                                max_estimate_us: 1_500_000, // 1.5s
+                                stored_observations_num_included_checkpoints: 10,
+                                stored_observations_limit: 20,
+                                stake_weighted_median_threshold: 3334,
+                            },
+                        );
+                    // Enable party transfer for testnet.
+                    if chain != Chain::Mainnet {
+                        cfg.feature_flags.enable_party_transfer = true;
+                    }
+                }
+                87 => {
+                    if chain == Chain::Mainnet {
+                        cfg.feature_flags.record_time_estimate_processed = true;
+                    }
+                    cfg.feature_flags.better_adapter_type_resolution_errors = true;
                 }
                 // Use this template when making changes:
                 //
@@ -3870,10 +3955,6 @@ impl ProtocolConfig {
             .consensus_round_prober_probe_accepted_rounds = val;
     }
 
-    pub fn set_consensus_linearize_subdag_v2_for_testing(&mut self, val: bool) {
-        self.feature_flags.consensus_linearize_subdag_v2 = val;
-    }
-
     pub fn set_mysticeti_fastpath_for_testing(&mut self, val: bool) {
         self.feature_flags.mysticeti_fastpath = val;
     }
@@ -3882,12 +3963,12 @@ impl ProtocolConfig {
         self.feature_flags.accept_passkey_in_multisig = val;
     }
 
-    pub fn set_consensus_median_based_commit_timestamp_for_testing(&mut self, val: bool) {
-        self.feature_flags.consensus_median_based_commit_timestamp = val;
-    }
-
     pub fn set_consensus_batched_block_sync_for_testing(&mut self, val: bool) {
         self.feature_flags.consensus_batched_block_sync = val;
+    }
+
+    pub fn set_enable_ptb_execution_v2_for_testing(&mut self, val: bool) {
+        self.feature_flags.enable_ptb_execution_v2 = val;
     }
 
     pub fn push_aliased_addresses_for_testing(
